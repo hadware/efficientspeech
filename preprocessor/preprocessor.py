@@ -17,6 +17,7 @@ class Preprocessor:
     def __init__(self, config):
         self.config = config
         self.in_dir = config["path"]["raw_path"]
+        self.tg_dir = config["path"]["tg_path"]
         self.out_dir = config["path"]["preprocessed_path"]
         self.val_size = config["preprocessing"]["val_size"]
         self.sampling_rate = config["preprocessing"]["audio"]["sampling_rate"]
@@ -64,30 +65,28 @@ class Preprocessor:
 
         # Compute pitch, energy, duration, and mel-spectrogram
         speakers = {}
-        for i, speaker in enumerate(tqdm(os.listdir(self.in_dir))):
-            speakers[speaker] = i
-            for wav_name in os.listdir(os.path.join(self.in_dir, speaker)):
-                if ".wav" not in wav_name:
+        for i, wav_name in enumerate(tqdm(os.listdir(self.in_dir))):
+            if ".wav" not in wav_name:
+                continue
+
+            basename = wav_name.split(".")[0]
+            tg_path = os.path.join(
+                self.tg_dir, "{}.TextGrid".format(basename)
+            )
+            if os.path.exists(tg_path):
+                ret = self.process_utterance(basename)
+                if ret is None:
                     continue
 
-                basename = wav_name.split(".")[0]
-                tg_path = os.path.join(
-                    self.out_dir, "TextGrid", speaker, "{}.TextGrid".format(basename)
-                )
-                if os.path.exists(tg_path):
-                    ret = self.process_utterance(speaker, basename)
-                    if ret is None:
-                        continue
-                    else:
-                        info, pitch, energy, n = ret
-                    out.append(info)
+                info, pitch, energy, n = ret
+                out.append(info)
 
-                if len(pitch) > 0:
-                    pitch_scaler.partial_fit(pitch.reshape((-1, 1)))
-                if len(energy) > 0:
-                    energy_scaler.partial_fit(energy.reshape((-1, 1)))
+            if len(pitch) > 0:
+                pitch_scaler.partial_fit(pitch.reshape((-1, 1)))
+            if len(energy) > 0:
+                energy_scaler.partial_fit(energy.reshape((-1, 1)))
 
-                n_frames += n
+            n_frames += n
 
         print("Computing statistic quantities ...")
         # Perform normalization if necessary
@@ -152,11 +151,11 @@ class Preprocessor:
 
         return out
 
-    def process_utterance(self, speaker, basename):
-        wav_path = os.path.join(self.in_dir, speaker, "{}.wav".format(basename))
-        text_path = os.path.join(self.in_dir, speaker, "{}.lab".format(basename))
+    def process_utterance(self, basename):
+        wav_path = os.path.join(self.in_dir, "{}.wav".format(basename))
+        text_path = os.path.join(self.in_dir, "{}.lab".format(basename))
         tg_path = os.path.join(
-            self.out_dir, "TextGrid", speaker, "{}.TextGrid".format(basename)
+            self.tg_dir, "{}.TextGrid".format(basename)
         )
 
         # Get alignments
@@ -228,23 +227,23 @@ class Preprocessor:
             energy = energy[: len(duration)]
 
         # Save files
-        dur_filename = "{}-duration-{}.npy".format(speaker, basename)
+        dur_filename = f"duration-{basename}.npy"
         np.save(os.path.join(self.out_dir, "duration", dur_filename), duration)
 
-        pitch_filename = "{}-pitch-{}.npy".format(speaker, basename)
+        pitch_filename = f"pitch-{basename}.npy"
         np.save(os.path.join(self.out_dir, "pitch", pitch_filename), pitch)
 
-        energy_filename = "{}-energy-{}.npy".format(speaker, basename)
+        energy_filename = f"energy-{basename}.npy"
         np.save(os.path.join(self.out_dir, "energy", energy_filename), energy)
 
-        mel_filename = "{}-mel-{}.npy".format(speaker, basename)
+        mel_filename = f"mel-{basename}.npy"
         np.save(
             os.path.join(self.out_dir, "mel", mel_filename),
             mel_spectrogram.T,
         )
 
         return (
-            "|".join([basename, speaker, text, raw_text]),
+            "|".join([basename, text, raw_text]),
             self.remove_outlier(pitch),
             self.remove_outlier(energy),
             mel_spectrogram.shape[1],

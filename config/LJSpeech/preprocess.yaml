@@ -1,10 +1,11 @@
 dataset: "LJSpeech"
 
 path:
-  corpus_path: "/data/tts/LJSpeech-1.1"
+  corpus_path: "data/LJSpeech-1.1"
   lexicon_path: "lexicon/librispeech-lexicon.txt"
-  raw_path: "/data/tts/LJSpeech-1.1/wavs"
-  preprocessed_path: "./preprocessed_data/LJSpeech"
+  raw_path: "data/LJSpeech-1.1/wavs_normalized"
+  tg_path: "data/LJSpeech-1.1/textgrids"
+  preprocessed_path: "data/LJSpeech-1.1/preprocessed"
 
 preprocessing:
   val_size: 512

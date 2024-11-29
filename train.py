@@ -36,7 +36,8 @@ if __name__ == "__main__":
     preprocess_config = yaml.load(
         open(args.preprocess_config, "r"), Loader=yaml.FullLoader)
     
-    args.num_workers *= args.devices 
+    args.num_workers *= args.devices
+    torch.set_float32_matmul_precision('high')
 
     datamodule = LJSpeechDataModule(preprocess_config=preprocess_config,
                                     batch_size=args.batch_size,
