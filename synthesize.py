@@ -7,14 +7,16 @@ Apache 2.0 License
 '''
 
 import re
+import time
+from string import punctuation
+
 import numpy as np
 import torch
-import time
-
-from string import punctuation
 from g2p_en import G2p
+
 from text import text_to_sequence
 from utils.tools import get_mask_from_lengths, synth_one_sample
+
 
 def read_lexicon(lex_path):
     lexicon = {}
@@ -63,17 +65,18 @@ def text2phoneme(lexicon, g2p, text, preprocess_config, verbose=False):
 
     return sequence
 
+
 def synthesize(lexicon, g2p, args, phoneme2mel, hifigan, preprocess_config, verbose=False):
-    assert(args.text is not None)
+    assert (args.text is not None)
 
     if verbose:
         start_time = time.time()
-    
+
     phoneme = np.array([text2phoneme(lexicon, g2p, args.text, preprocess_config)])
     phoneme_len = np.array([len(phoneme[0])])
 
-    phoneme = torch.from_numpy(phoneme).long()  
-    phoneme_len = torch.from_numpy(phoneme_len) 
+    phoneme = torch.from_numpy(phoneme).long()
+    phoneme_len = torch.from_numpy(phoneme_len)
     max_phoneme_len = torch.max(phoneme_len).item()
     phoneme_mask = get_mask_from_lengths(phoneme_len, max_phoneme_len)
     x = {"phoneme": phoneme, "phoneme_mask": phoneme_mask}
@@ -83,14 +86,14 @@ def synthesize(lexicon, g2p, args, phoneme2mel, hifigan, preprocess_config, verb
         print("(Preprocess) time: {:.4f}s".format(elapsed_time))
 
         start_time = time.time()
-    
+
     with torch.no_grad():
         y = phoneme2mel(x, train=False)
-        
+
     if verbose:
         elapsed_time = time.time() - start_time
         print("(Phoneme2Mel) Synthesizing MEL time: {:.4f}s".format(elapsed_time))
-    
+
     mel_pred = y["mel"]
     mel_pred_len = y["mel_len"]
 
@@ -100,27 +103,27 @@ def synthesize(lexicon, g2p, args, phoneme2mel, hifigan, preprocess_config, verb
 
 def load_module(args, model, preprocess_config):
     print("Loading model checkpoint ...", args.checkpoint)
-    model = model.load_from_checkpoint(args.checkpoint, 
+    model = model.load_from_checkpoint(args.checkpoint,
                                        preprocess_config=preprocess_config,
-                                       lr=args.lr, 
-                                       weight_decay=args.weight_decay, 
+                                       lr=args.lr,
+                                       weight_decay=args.weight_decay,
                                        max_epochs=args.max_epochs,
-                                       depth=args.depth, 
-                                       n_blocks=args.n_blocks, 
+                                       depth=args.depth,
+                                       n_blocks=args.n_blocks,
                                        block_depth=args.block_depth,
-                                       reduction=args.reduction, 
+                                       reduction=args.reduction,
                                        head=args.head,
-                                       embed_dim=args.embed_dim, 
+                                       embed_dim=args.embed_dim,
                                        kernel_size=args.kernel_size,
                                        decoder_kernel_size=args.decoder_kernel_size,
-                                       expansion=args.expansion, 
+                                       expansion=args.expansion,
                                        hifigan_checkpoint=args.hifigan_checkpoint,
-                                       infer_device=args.infer_device, 
+                                       infer_device=args.infer_device,
                                        verbose=args.verbose)
     model.eval()
-    
+
     phoneme2mel = model.phoneme2mel
     model.hifigan.eval()
     hifigan = model.hifigan
-    
+
     return phoneme2mel, hifigan

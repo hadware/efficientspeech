@@ -12,11 +12,13 @@ hyperparameter. Some cleaners are English-specific. You'll typically want to use
      the symbols in symbols.py to match your data).
 '''
 
-
 # Regular expression matching whitespace:
 import re
+
 from unidecode import unidecode
+
 from .numbers import normalize_numbers
+
 _whitespace_re = re.compile(r'\s+')
 
 # List of (regular expression, replacement) pairs for abbreviations:
@@ -59,9 +61,11 @@ def lowercase(text):
 def collapse_whitespace(text):
     return re.sub(_whitespace_re, ' ', text)
 
+
 def dash_to_whitespace(text):
     text = text.replace('-', ' ')
     return text
+
 
 def convert_to_ascii(text):
     return unidecode(text)

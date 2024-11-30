@@ -1,8 +1,5 @@
 """ from https://github.com/keithito/tacotron """
 
-import re
-
-
 valid_symbols = [
     "I",
     "a",
@@ -53,4 +50,4 @@ valid_symbols = [
     "z",
 ]
 
-#_valid_symbol_set = set(valid_symbols)
+# _valid_symbol_set = set(valid_symbols)

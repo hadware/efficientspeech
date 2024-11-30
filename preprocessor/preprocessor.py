@@ -1,11 +1,11 @@
+import json
 import os
 import random
-import json
 
-import tgt
 import librosa
 import numpy as np
 import pyworld as pw
+import tgt
 from scipy.interpolate import interp1d
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
@@ -32,10 +32,10 @@ class Preprocessor:
             "frame_level",
         ]
         self.pitch_phoneme_averaging = (
-            config["preprocessing"]["pitch"]["feature"] == "phoneme_level"
+                config["preprocessing"]["pitch"]["feature"] == "phoneme_level"
         )
         self.energy_phoneme_averaging = (
-            config["preprocessing"]["energy"]["feature"] == "phoneme_level"
+                config["preprocessing"]["energy"]["feature"] == "phoneme_level"
         )
 
         self.pitch_normalization = config["preprocessing"]["pitch"]["normalization"]
@@ -143,7 +143,7 @@ class Preprocessor:
 
         # Write metadata
         with open(os.path.join(self.out_dir, "train.txt"), "w", encoding="utf-8") as f:
-            for m in out[self.val_size :]:
+            for m in out[self.val_size:]:
                 f.write(m + "\n")
         with open(os.path.join(self.out_dir, "val.txt"), "w", encoding="utf-8") as f:
             for m in out[: self.val_size]:
@@ -170,8 +170,8 @@ class Preprocessor:
         # Read and trim wav files
         wav, _ = librosa.load(wav_path)
         wav = wav[
-            int(self.sampling_rate * start) : int(self.sampling_rate * end)
-        ].astype(np.float32)
+              int(self.sampling_rate * start): int(self.sampling_rate * end)
+              ].astype(np.float32)
 
         # Read raw text
         with open(text_path, "r") as f:
@@ -209,7 +209,7 @@ class Preprocessor:
             pos = 0
             for i, d in enumerate(duration):
                 if d > 0:
-                    pitch[i] = np.mean(pitch[pos : pos + d])
+                    pitch[i] = np.mean(pitch[pos: pos + d])
                 else:
                     pitch[i] = 0
                 pos += d
@@ -220,7 +220,7 @@ class Preprocessor:
             pos = 0
             for i, d in enumerate(duration):
                 if d > 0:
-                    energy[i] = np.mean(energy[pos : pos + d])
+                    energy[i] = np.mean(energy[pos: pos + d])
                 else:
                     energy[i] = 0
                 pos += d

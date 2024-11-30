@@ -20,7 +20,7 @@ if __name__ == "__main__":
         open(args.preprocess_config, "r"), Loader=yaml.FullLoader)
 
     model = EfficientSpeech(preprocess_config=preprocess_config)
-    model = model.load_from_checkpoint(args.checkpoint, map_location=torch.device('cpu'))
+    model = EfficientSpeech.load_from_checkpoint(args.checkpoint, map_location=torch.device('cpu'))
     model = model.to(args.infer_device)
 
     if args.onnx is not None:
@@ -33,8 +33,10 @@ if __name__ == "__main__":
         # or use model.to_onnx
         #model.to_onnx(args.onnx, sample_input, input_names="phoneme") #, export_params=True)
         torch.onnx.export(model, sample_input, args.onnx,
-                          opset_version=args.onnx_opset, do_constant_folding=True,
-                          input_names=["inputs"], output_names=["outputs"],
+                          opset_version=args.onnx_opset,
+                          do_constant_folding=True,
+                          input_names=["inputs"],
+                          output_names=["outputs"],
                           dynamic_axes={
                               "inputs": {1: "phoneme"},
                               # ideally, this works but repeat_interleave is fixed

@@ -9,15 +9,16 @@ Usage:
 '''
 
 
-import yaml
-import torch
 import datetime
-from datamodule import LJSpeechDataModule
-from lightning import Trainer
-from lightning.pytorch.strategies import DDPStrategy
 
-from utils.tools import get_args
+import torch
+import yaml
+from lightning import Trainer
+from lightning.pytorch.loggers import TensorBoardLogger
+
+from datamodule import LJSpeechDataModule
 from model import EfficientSpeech
+from utils.tools import get_args
 
 
 def print_args(args):
@@ -63,12 +64,15 @@ if __name__ == "__main__":
 
     if args.verbose:
         print_args(args)
+
+    logger = TensorBoardLogger("tb_logs", name="efficientspeech")
         
     trainer = Trainer(accelerator=args.accelerator, 
                       devices=args.devices,
                       precision=args.precision,
-                      check_val_every_n_epoch=10,
-                      max_epochs=args.max_epochs,)
+                      check_val_every_n_epoch=5,
+                      max_epochs=args.max_epochs,
+                      logger=logger)
 
     if args.compile:
         model = torch.compile(model)

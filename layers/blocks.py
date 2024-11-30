@@ -1,8 +1,8 @@
 
-from einops import reduce, repeat
-from torch import nn
 import torch
 import torch.nn.functional as F
+from einops import reduce, repeat
+from torch import nn
 
 
 class MixFFN(nn.Module):

@@ -40,6 +40,31 @@ def write_to_file(wavs, preprocess_config, lengths=None, wav_path="outputs", fil
     
     return wavs, sampling_rate
 
+def save_figure_to_numpy(fig, spectrogram=False):
+    # save it to a numpy array.
+    data = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+    data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    if spectrogram:
+        return data
+    data = np.transpose(data, (2, 0, 1))
+    return data
+
+
+def plot_spectrogram_to_numpy(spectrogram):
+    fig, ax = plt.subplots(figsize=(12, 3))
+    im = ax.imshow(spectrogram, aspect="auto", origin="lower",
+                   interpolation='none')
+    plt.colorbar(im, ax=ax)
+    plt.xlabel("Frames")
+    plt.ylabel("Channels")
+    plt.tight_layout()
+
+    fig.canvas.draw()
+    data = save_figure_to_numpy(fig, True)
+    plt.close()
+    return data
+
+
 def get_mask_from_lengths(lengths, max_len=None):
     batch_size = lengths.shape[0]
     if max_len is None:
@@ -404,7 +429,7 @@ def get_args():
     
     choices = ['cpu', 'cuda']
     parser.add_argument("--infer-device",
-                        default=choices[1],
+                        default='cpu',
                         choices=choices,
                         type=str,
                         help="Inference device",)
