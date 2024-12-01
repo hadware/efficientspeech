@@ -21,7 +21,7 @@ from layers import PhonemeEncoder, MelDecoder, Phoneme2Mel
 from utils.tools import plot_spectrogram_to_numpy
 
 
-def get_hifigan(checkpoint="hifigan/LJ_V2/generator_v2", infer_device=None, verbose=False):
+def get_hifigan(checkpoint="hifigan/LJ_V2/generator_v2", infer_device=None, verbose=False) -> hifigan.Generator:
     # get the main path
     main_path = os.path.dirname(os.path.abspath(checkpoint))
     json_config = os.path.join(main_path, "config.json")

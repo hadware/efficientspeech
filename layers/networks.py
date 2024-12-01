@@ -257,6 +257,13 @@ class FeatureUpsampler(nn.Module):
 
         return features, masks, len_pred
 
+    @torch.inference_mode()
+    def infer_one(self, fused_features, duration):
+        repetition = duration.squeeze().int()
+        fused_features = fused_features.squeeze()
+        features = fused_features.repeat_interleave(repetition, dim=0).unsqueeze(0)
+        return features
+
 
 class MelDecoder(nn.Module):
     """ Mel Spectrogram Decoder """
@@ -400,6 +407,41 @@ class PhonemeEncoder(nn.Module):
 
         return y
 
+    @torch.inference_mode()
+    def infer_one(self, phoneme: torch.Tensor):
+        features, _ = self.encoder(phoneme, mask=None)
+        fused_features = self.fuse(features, mask=None)
+
+        pitch_pred = self.pitch_decoder(fused_features)
+        pitch_features = self.pitch_decoder.get_embedding(pitch_pred, None, None)
+        pitch_features = pitch_features.squeeze()
+        pitch_features = pitch_features.unsqueeze(0)
+
+        energy_pred = self.energy_decoder(fused_features)
+        energy_features = self.energy_decoder.get_embedding(energy_pred, None, None)
+        energy_features = energy_features.squeeze()
+        energy_features = energy_features.unsqueeze(0)
+
+        duration_pred, duration_features = self.duration_decoder(fused_features)
+
+        fused_features = torch.cat([fused_features,
+                                    pitch_features,
+                                    energy_features,
+                                    duration_features], dim=-1)
+
+        durations = torch.round(duration_pred).squeeze().unsqueeze(0)
+
+        features = self.feature_upsampler.infer_one(fused_features,
+                                                    duration=durations)
+
+        y = {"pitch": pitch_pred,
+             "energy": energy_pred,
+             "duration": duration_pred,
+             "features": features,
+             "masks": None}
+
+        return y
+
 
 class Phoneme2Mel(nn.Module):
     """ From Phoneme Sequence to Mel Spectrogram """
@@ -413,11 +455,6 @@ class Phoneme2Mel(nn.Module):
         self.decoder = decoder
 
     def forward(self, x, train=False):
-        # Dirty trick to enable ONNX compilation.
-        # Else, the torch.to_onnx complains about missing input in the forward method.
-        if isinstance(x, list):
-            x = x[0]
-
         pred = self.encoder(x, train=train)
         mel = self.decoder(pred["features"])
 
@@ -432,3 +469,10 @@ class Phoneme2Mel(nn.Module):
             return pred
 
         return mel, pred["mel_len"], pred["duration"]
+
+    @torch.inference_mode()
+    def synthesize_one(self, x: torch.Tensor):
+        # inserting "fake" batch dim for inference
+        pred = self.encoder.infer_one(x)
+        mel = self.decoder(pred["features"])
+        return mel, pred["duration"]
