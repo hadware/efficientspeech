@@ -18,19 +18,15 @@ from utils.tools import get_args
 
 class OgmiosOnnx(torch.nn.Module):
     def __init__(self,
-                 phon2mel: Phoneme2Mel,
-                 vocoder: hifigan.Generator):
+                 phon2mel: Phoneme2Mel):
         super().__init__()
         self.phon2mel = phon2mel
-        self.vocoder = vocoder
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.unsqueeze(0)
         mel, lengths = self.phon2mel.synthesize_one(x)
         mel = mel.transpose(1, 2)
-        wav = self.vocoder(mel).squeeze(1)
-        wav = wav.squeeze()
-        return wav
+        return mel
 
 # main routine
 if __name__ == "__main__":
@@ -43,9 +39,9 @@ if __name__ == "__main__":
     hifigan = get_hifigan(checkpoint="hifigan/LJ_V2/generator_v2",
                           infer_device=args.infer_device, verbose=args.verbose)
 
-    ogmios_model = OgmiosOnnx(phon2mel=model.phoneme2mel,vocoder=hifigan)
+    ogmios_model = OgmiosOnnx(phon2mel=model.phoneme2mel)
 
-    phoneme = torch.randint(low=70, high=146, size=(args.onnx_insize,)).int().to(args.infer_device)
+    phoneme = torch.randint(low=70, high=146, size=(69,)).int().to(args.infer_device)
     print("Input shape: ", phoneme.shape)
     sample_input = [phoneme]
     print("Converting to ONNX ...", args.onnx)
@@ -56,8 +52,8 @@ if __name__ == "__main__":
                       opset_version=args.onnx_opset,
                       do_constant_folding=True,
                       input_names=["x"],
-                      output_names=["wav"],
+                      output_names=["mel"],
                       dynamic_axes={
                           "x": {0: "phoneme"},
-                          "wav": {0: "frames"}
+                          "mel": {0: "frames"}
                       })
