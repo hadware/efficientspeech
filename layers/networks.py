@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from text.symbols import symbols
+from utils.tools import sequence_mask
 from .blocks import MixFFN, SelfAttention
 
 
@@ -272,6 +273,8 @@ class GaussianUpsampling(torch.nn.Module):
     Gaussian upsampling with fixed temperature as in:
     https://arxiv.org/abs/2010.04301
     """
+    # TODO: maybe use this implem
+    #  https://github.com/oortur/text-to-speech/blob/c1086d1cc71a37f5974bdd7eaaaec4db965156c7/models.py#L106
 
     def __init__(self, delta=0.1):
         super().__init__()
@@ -432,17 +435,26 @@ class PhonemeEncoder(nn.Module):
                                     duration_features], dim=-1)
 
         if duration_target is None:
-            duration_target = torch.round(duration_pred).squeeze()
-        if phoneme_mask is not None:
-            duration_target = duration_target.masked_fill(phoneme_mask, 0).clamp(min=0)
+            durations = torch.round(duration_pred).squeeze()
         else:
-            duration_target = duration_target.unsqueeze(0)
+            durations = duration_target
+
+        if phoneme_mask is not None:
+            durations = durations.masked_fill(phoneme_mask, 0).clamp(min=0)
+        else:
+            durations = durations.unsqueeze(0)
+
+        if not train and mel_mask is None:
+            mel_lengths = durations.sum(dim=1)
+            mel_max_length = mel_lengths.max()
+            mel_mask = (sequence_mask(mel_lengths, mel_max_length)).type_as(x)
+            mel_mask = ~mel_mask
 
         features = self.feature_upsampler(
             hs=fused_features,
             ds=duration_target,
-            h_masks=~mel_mask if mel_mask is not None else None,
-            d_masks=~phoneme_mask if phoneme_mask is not None else None
+            h_masks=~mel_mask,
+            d_masks=~phoneme_mask
         )
         mel_len_pred = duration_target.sum(dim=1)
 
