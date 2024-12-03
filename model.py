@@ -249,7 +249,7 @@ class EfficientSpeech(LightningModule):
             x, y = batch
             wavs, mels_pred, mels_len, _ = self.forward(x)
             wavs = wavs.to(torch.float).cpu()
-
+            mels_len = mels_len.int()
             self.logger.experiment.add_image(
                 "mel/pred",
                 plot_spectrogram_to_numpy(mels_pred[0,:,:mels_len[0]].cpu().numpy()),

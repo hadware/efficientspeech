@@ -266,6 +266,7 @@ class FeatureUpsampler(nn.Module):
         features = fused_features.repeat_interleave(repetition, dim=0).unsqueeze(0)
         return features
 
+
 class GaussianUpsampling(torch.nn.Module):
     """
     Gaussian upsampling with fixed temperature as in:
@@ -302,7 +303,7 @@ class GaussianUpsampling(torch.nn.Module):
             ds[ds.sum(dim=1).eq(0)] = 1
 
         if h_masks is None:
-            T_feats = ds.sum().int()
+            T_feats = ds.sum(dim=1).int().max()
         else:
             T_feats = h_masks.size(-1)
         t = torch.arange(0, T_feats).unsqueeze(0).repeat(B, 1).to(device).float()
@@ -317,6 +318,7 @@ class GaussianUpsampling(torch.nn.Module):
         p_attn = torch.softmax(energy, dim=2)  # (B, T_feats, T_text)
         hs = torch.matmul(p_attn, hs)
         return hs
+
 
 class MelDecoder(nn.Module):
     """ Mel Spectrogram Decoder """
@@ -386,7 +388,7 @@ class PhonemeEncoder(nn.Module):
 
         dim = embed_dim // reduction
         self.fuse = Fuse(self.encoder.get_feature_dims(), kernel_size=kernel_size)
-        self.feature_upsampler = FeatureUpsampler()
+        self.feature_upsampler = GaussianUpsampling()
         self.pitch_decoder = AcousticDecoder(dim, pitch_stats=pitch_stats)
         self.energy_decoder = AcousticDecoder(dim, energy_stats=energy_stats)
         self.duration_decoder = AcousticDecoder(dim, duration=True)
@@ -398,8 +400,7 @@ class PhonemeEncoder(nn.Module):
         pitch_target = x["pitch"] if train else None
         energy_target = x["energy"] if train else None
         duration_target = x["duration"] if train else None
-        mel_len = x["mel_len"] if train else None
-        max_mel_len = torch.max(mel_len).item() if train else None
+        mel_mask = x["mel_mask"] if train else None
 
         features, mask = self.encoder(phoneme, mask=phoneme_mask)
         fused_features = self.fuse(features, mask=mask)
@@ -430,12 +431,6 @@ class PhonemeEncoder(nn.Module):
                                     energy_features,
                                     duration_features], dim=-1)
 
-        # TODO: Use fused_masks of all False for inference of bs=1
-        if mask is None:
-            fused_masks = torch.zeros_like(fused_features).bool()
-        else:
-            fused_masks = torch.cat([mask, mask, mask, mask], dim=-1)
-
         if duration_target is None:
             duration_target = torch.round(duration_pred).squeeze()
         if phoneme_mask is not None:
@@ -443,20 +438,19 @@ class PhonemeEncoder(nn.Module):
         else:
             duration_target = duration_target.unsqueeze(0)
 
-        features, masks, mel_len_pred = self.feature_upsampler(fused_features,
-                                                               fused_masks,
-                                                               duration=duration_target,
-                                                               max_mel_len=max_mel_len, )
-
-        if mask is None:
-            masks = None
+        features = self.feature_upsampler(
+            hs=fused_features,
+            ds=duration_target,
+            h_masks=~mel_mask if mel_mask is not None else None,
+            d_masks=~phoneme_mask if phoneme_mask is not None else None
+        )
+        mel_len_pred = duration_target.sum(dim=1)
 
         y = {"pitch": pitch_pred,
              "energy": energy_pred,
              "duration": duration_pred,
              "mel_len": mel_len_pred,
-             "features": features,
-             "masks": masks, }
+             "features": features}
 
         return y
 
@@ -484,6 +478,7 @@ class PhonemeEncoder(nn.Module):
 
         durations = torch.round(duration_pred).squeeze().unsqueeze(0)
 
+        # TODO: use gaussian upsampler
         features = self.feature_upsampler.infer_one(fused_features,
                                                     duration=durations)
 
@@ -511,10 +506,10 @@ class Phoneme2Mel(nn.Module):
         pred = self.encoder(x, train=train)
         mel = self.decoder(pred["features"])
 
-        mask = pred["masks"]
-        if mask is not None and mel.size(0) > 1:
-            mask = mask[:, :, :mel.shape[-1]]
-            mel = mel.masked_fill(mask, 0)
+        if train:
+            mel_mask = x["mel_mask"]
+            mel_mask = mel_mask.unsqueeze(2).repeat(1, 1, mel.shape[-1])
+            mel = mel.masked_fill(~mel_mask, 0)
 
         pred["mel"] = mel
 
