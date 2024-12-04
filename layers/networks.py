@@ -11,7 +11,6 @@ import torch.nn.functional as F
 from torch import nn
 
 from text.symbols import symbols
-from utils.tools import sequence_mask
 from .blocks import MixFFN, SelfAttention
 
 
@@ -272,55 +271,51 @@ class GaussianUpsampling(torch.nn.Module):
     """
     Gaussian upsampling with fixed temperature as in:
     https://arxiv.org/abs/2010.04301
+
+    Implem from : https://github.com/oortur/text-to-speech/blob/c1086d1cc71a37f5974bdd7eaaaec4db965156c7/models.py#L106
+
     """
-    # TODO: maybe use this implem
-    #  https://github.com/oortur/text-to-speech/blob/c1086d1cc71a37f5974bdd7eaaaec4db965156c7/models.py#L106
 
-    def __init__(self, delta=0.1):
+    def __init__(
+            self,
+            log_sigma=0,
+    ):
         super().__init__()
-        self.delta = delta
+        log_sigma = log_sigma or torch.randn(1).item()
+        self.log_sigma = nn.Parameter(torch.tensor(log_sigma), requires_grad=True)
+        self.mask_fill_value = -1e10
 
-    def forward(self, hs, ds, h_masks=None, d_masks=None):
-        """Upsample hidden states according to durations.
-
-        Args:
-            hs (Tensor): Batched hidden state to be expanded (B, T_text, adim).
-            ds (Tensor): Batched token duration (B, T_text).
-            h_masks (Tensor): Mask tensor (B, T_feats).
-            d_masks (Tensor): Mask tensor (B, T_text).
-
-        Returns:
-            Tensor: Expanded hidden state (B, T_feat, adim).
-
+    def forward(self, emb: torch.Tensor, durations: torch.Tensor):
         """
-        B = ds.size(0)
-        device = ds.device
+        emb ~ (bs, seq_len, emb_dim)
+        durations ~ (bs, seq_len)
+        """
+        bs, seq_len = emb.shape[:2]
+        device = emb.device
 
-        # NOTE: this will raise an ONNX error. Ignore the error for now, as it is
-        # an unlikely edge case in inference. Keeping it for training safety
-        if ds.sum() == 0:
-            logging.warning("predicted durations includes all 0 sequences. " "fill the first element with 1.")
-            # NOTE(kan-bayashi): This case must not be happened in teacher forcing.
-            #   It will be happened in inference with a bad duration predictor.
-            #   So we do not need to care the padded sequence case here.
-            ds[ds.sum(dim=1).eq(0)] = 1
+        # (bs, seq_len)
+        centers = torch.cumsum(durations, dim=1) - durations * 0.5
 
-        if h_masks is None:
-            T_feats = ds.sum(dim=1).int().max()
-        else:
-            T_feats = h_masks.size(-1)
-        t = torch.arange(0, T_feats).unsqueeze(0).repeat(B, 1).to(device).float()
-        if h_masks is not None:
-            t = t * h_masks.float()
+        # T - max num of ticks per batch / Mel max len
+        T = torch.sum(durations, dim=1).int().max()
 
-        c = ds.cumsum(dim=-1) - ds / 2
-        energy = -1 * self.delta * (t.unsqueeze(-1) - c.unsqueeze(1)) ** 2
-        if d_masks is not None:
-            energy = energy.masked_fill(~(d_masks.unsqueeze(1).repeat(1, T_feats, 1)), -float("inf"))
+        # (bs, T, 1)
+        t = torch.arange(T).repeat(bs, 1).unsqueeze(2).to(device)
+        normal = torch.distributions.Normal(loc=centers.unsqueeze(1), scale=torch.exp(self.log_sigma).view(1, 1, 1))
+        # (bs, T, seq_len)
+        prob = normal.log_prob(t + 0.5)
+        mask = (durations == 0).unsqueeze(1)
+        prob = prob.masked_fill(mask, self.mask_fill_value)
+        w = nn.Softmax(dim=2)(prob)
 
-        p_attn = torch.softmax(energy, dim=2)  # (B, T_feats, T_text)
-        hs = torch.matmul(p_attn, hs)
-        return hs
+        # (bs, T, emb_dim)
+        x = torch.bmm(w, emb)
+
+        # (bs, T)
+        out_mask = t < durations.sum(dim=1).view(bs, 1, 1)
+        out_mask = out_mask.repeat(1, 1, emb.shape[-1])
+
+        return x, out_mask
 
 
 class MelDecoder(nn.Module):
@@ -403,7 +398,6 @@ class PhonemeEncoder(nn.Module):
         pitch_target = x["pitch"] if train else None
         energy_target = x["energy"] if train else None
         duration_target = x["duration"] if train else None
-        mel_mask = x["mel_mask"] if train else None
 
         features, mask = self.encoder(phoneme, mask=phoneme_mask)
         fused_features = self.fuse(features, mask=mask)
@@ -444,25 +438,18 @@ class PhonemeEncoder(nn.Module):
         else:
             durations = durations.unsqueeze(0)
 
-        if not train and mel_mask is None:
-            mel_lengths = durations.sum(dim=1)
-            mel_max_length = mel_lengths.max()
-            mel_mask = (sequence_mask(mel_lengths, mel_max_length)).type_as(x)
-            mel_mask = ~mel_mask
-
-        features = self.feature_upsampler(
-            hs=fused_features,
-            ds=duration_target,
-            h_masks=~mel_mask,
-            d_masks=~phoneme_mask
+        features, mel_mask = self.feature_upsampler(
+            emb=fused_features,
+            durations=durations,
         )
-        mel_len_pred = duration_target.sum(dim=1)
+        mel_len_pred = durations.sum(dim=1)
 
         y = {"pitch": pitch_pred,
              "energy": energy_pred,
              "duration": duration_pred,
              "mel_len": mel_len_pred,
-             "features": features}
+             "features": features,
+             "mel_mask": mel_mask, }
 
         return y
 
@@ -490,9 +477,8 @@ class PhonemeEncoder(nn.Module):
 
         durations = torch.round(duration_pred).squeeze().unsqueeze(0)
 
-        # TODO: use gaussian upsampler
-        features = self.feature_upsampler.infer_one(fused_features,
-                                                    duration=durations)
+        features, _ = self.feature_upsampler(emb=fused_features,
+                                             durations=durations)
 
         y = {"pitch": pitch_pred,
              "energy": energy_pred,
@@ -518,9 +504,9 @@ class Phoneme2Mel(nn.Module):
         pred = self.encoder(x, train=train)
         mel = self.decoder(pred["features"])
 
-        if train:
-            mel_mask = x["mel_mask"]
-            mel_mask = mel_mask.unsqueeze(2).repeat(1, 1, mel.shape[-1])
+        mel_mask = pred["mel_mask"]
+        if mel_mask is not None and mel.size(0) > 1:
+            mel_mask = mel_mask[:, :, :mel.shape[-1]]
             mel = mel.masked_fill(~mel_mask, 0)
 
         pred["mel"] = mel

@@ -70,7 +70,7 @@ if __name__ == "__main__":
     trainer = Trainer(accelerator=args.accelerator, 
                       devices=args.devices,
                       precision=args.precision,
-                      check_val_every_n_epoch=1,
+                      check_val_every_n_epoch=args.val_every_epoch,
                       max_epochs=args.max_epochs,
                       logger=logger)
 

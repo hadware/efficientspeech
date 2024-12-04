@@ -377,6 +377,12 @@ def get_args():
                         default=1e-3,
                         metavar='N',
                         help='Learning rate for AdamW.')
+
+    parser.add_argument('--val-every-epoch',
+                        type=int,
+                        default=5,
+                        metavar='N',
+                        help='Check val every N epochs')
         
     parser.add_argument('--batch-size',
                         type=int,

@@ -1,6 +1,7 @@
 import numpy as np
 import onnx
 import onnxruntime
+import torch
 import yaml
 
 from model import get_hifigan
@@ -35,7 +36,9 @@ if __name__ == '__main__':
     # vocoding
     hifigan = get_hifigan(checkpoint="hifigan/LJ_V2/generator_v2",
                           infer_device=args.infer_device, verbose=args.verbose)
-
+    mel = torch.tensor(outputs[0])
+    wav = hifigan(mel).squeeze(1)
+    wav = wav.squeeze().cpu().numpy()
 
     if args.play:
         import sounddevice as sd
@@ -47,5 +50,5 @@ if __name__ == '__main__':
         sd.default.device = None
         sd.default.latency = 'low'
 
-        sd.play(outputs[0])
+        sd.play(wav)
         sd.wait()
