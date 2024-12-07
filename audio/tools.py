@@ -1,5 +1,5 @@
-import torch
 import numpy as np
+import torch
 from scipy.io.wavfile import write
 
 from audio.audio_processing import griffin_lim
@@ -15,6 +15,7 @@ def get_mel_from_wav(audio, _stft):
     return melspec, energy
 
 
+# TODO: unused
 def inv_mel_spec(mel, out_filename, _stft, griffin_iters=60):
     mel = torch.stack([mel])
     mel_decompress = _stft.spectral_de_normalize(mel)
