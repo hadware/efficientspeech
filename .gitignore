@@ -136,10 +136,9 @@ lightning_logs
 *.ckpt
 *.txt
 *.DS_Store
-LJ_V3/
-LJ_FT_T2_V2/
 *.onnx
 *.swp
 *.ckpt
 data/
 .idea/
+tb_logs/
