@@ -1,4 +1,5 @@
 import csv
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,6 +51,18 @@ class DatasetFolder:
     def transcripts(self) -> dict[str, str]:
         with open(self.root_path / "transcripts.csv", "r") as f:
             return {t[0]: t[1] for t in csv.reader(f, delimiter="\t")}
+
+
+    @property
+    def phonemes(self) -> list[str]:
+        with open(self.preprocessed_folder / "phones.json") as f:
+            return json.load(f)
+
+
+    @property
+    def stats(self) -> dict[str, "AcousticStats"]:
+        with open(self.preprocessed_folder / "stats.json") as f:
+            return json.load(f)
 
     def __iter__(self) -> Iterable[tuple[Path, Path]]:
         all_alignments = {

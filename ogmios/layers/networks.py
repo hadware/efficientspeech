@@ -98,6 +98,7 @@ class Encoder(nn.Module):
 
 class AcousticDecoder(nn.Module):
     """ Pitch, Duration, Energy Predictor """
+    # TODO: simplify (just one function for embeddings, maybe two for one with inference
 
     def __init__(self, dim: int,
                  pitch_stats=None,
@@ -117,7 +118,7 @@ class AcousticDecoder(nn.Module):
 
         # TODO: switch to gaussian linspace, using pitch stats
         if pitch_stats is not None:
-            pitch_min, pitch_max = pitch_stats
+            pitch_min, pitch_max = pitch_stats["min"], pitch_stats["max"]
             self.pitch_bins = nn.Parameter(torch.linspace(pitch_min, pitch_max, dim - 1),
                                            requires_grad=False, )
             self.pitch_embedding = nn.Embedding(dim, dim)
@@ -126,7 +127,7 @@ class AcousticDecoder(nn.Module):
             self.pitch_embedding = None
 
         if energy_stats is not None:
-            energy_min, energy_max = energy_stats
+            energy_min, energy_max = energy_stats["min"], energy_stats["max"]
             self.energy_bins = nn.Parameter(torch.linspace(energy_min, energy_max, dim - 1),
                                             requires_grad=False, )
             self.energy_embedding = nn.Embedding(dim, dim)

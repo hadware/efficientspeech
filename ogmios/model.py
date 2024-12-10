@@ -8,7 +8,6 @@ Apache 2.0 License
 
 import json
 import math
-import os
 
 import torch
 import torch.nn as nn
@@ -26,7 +25,7 @@ from ogmios.utils import plot_spectrogram_to_numpy
 def get_hifigan(checkpoint: str, infer_device=None, verbose=False) -> hifigan.Generator:
     # get the main path
     main_path = HIFIGAN_MODELS_FOLDER / checkpoint
-    json_config = main_path / "config.json"
+    json_config = main_path.parent / "config.json"
     if verbose:
         print("Using config: ", json_config)
         print("Using hifigan checkpoint: ", checkpoint)
@@ -38,9 +37,9 @@ def get_hifigan(checkpoint: str, infer_device=None, verbose=False) -> hifigan.Ge
     vocoder = hifigan.Generator(config)
     if infer_device is not None:
         vocoder.to(infer_device)
-        ckpt = torch.load(checkpoint, map_location=torch.device(infer_device), weights_only=True)
+        ckpt = torch.load(main_path, map_location=torch.device(infer_device), weights_only=True)
     else:
-        ckpt = torch.load(checkpoint)
+        ckpt = torch.load(main_path)
         # ckpt = torch.load("hifigan/generator_LJSpeech.pth.tar")
     vocoder.load_state_dict(ckpt["generator"])
     vocoder.eval()
@@ -130,17 +129,9 @@ class EfficientSpeech(LightningModule):
 
         self.save_hyperparameters()
 
-        with open(dataset_folder.preprocessed_folder / "phones.json") as f:
-            phonemes = json.load(f)
-
-        with open(dataset_folder.preprocessed_folder / "stats.json") as f:
-            stats = json.load(f)
-            pitch_stats = stats["pitch"]
-            energy_stats = stats["energy"]
-
-        phoneme_encoder = PhonemeEncoder(alphabet_dim=len(phonemes),
-                                         pitch_stats=pitch_stats,
-                                         energy_stats=energy_stats,
+        phoneme_encoder = PhonemeEncoder(alphabet_dim=len(dataset_folder.phonemes),
+                                         pitch_stats=dataset_folder.stats["pitch"],
+                                         energy_stats=dataset_folder.stats["energy"],
                                          depth=depth,
                                          reduction=reduction,
                                          head=head,
@@ -264,8 +255,7 @@ class EfficientSpeech(LightningModule):
             self.logger.experiment.add_audio(tag="wav/predicted",
                                              snd_tensor=wavs[0],
                                              global_step=self.global_step,
-                                             sample_rate=self.hparams.preprocess_config["preprocessing"]["audio"][
-                                                 "sampling_rate"])
+                                             sample_rate=self.hparams.preprocess_config.sampling_rate)
 
             # then logging resynthesis of ground truth mel (through hifigan)
             mel = y["mel"]
@@ -278,8 +268,7 @@ class EfficientSpeech(LightningModule):
                 self.logger.experiment.add_audio(tag="wav/resynth",
                                                  snd_tensor=wavs[0],
                                                  global_step=self.global_step,
-                                                 sample_rate=self.hparams.preprocess_config["preprocessing"]["audio"][
-                                                     "sampling_rate"])
+                                                 sample_rate=self.hparams.preprocess_config.sampling_rate)
 
                 self.logger.experiment.add_image(
                     "mel/target",

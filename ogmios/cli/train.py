@@ -20,8 +20,8 @@ from lightning.pytorch.loggers import TensorBoardLogger
 from tap import Tap
 
 from ogmios.datamodule import OgmiosDataModule
+from ogmios.dataset.commons import PreprocessingConfig, DatasetFolder
 from ogmios.model import EfficientSpeech
-from ogmios.utils import get_args
 
 
 def print_args(args):
@@ -53,18 +53,17 @@ class TrainCommandParser(Tap):
 
     batch_size: int = 128  # Batch size
     depth: int = 2  # Encoder depth. Default for tiny, small & base.
-    block_depth: int = 2 # Decoder block depth. Default for tiny & small. Base:  3
-    n_blocks: int = 2 # Decoder blocks. Default for tiny. Small & base: 3.
-    reduction: int = 4 # Embed dim reduction factor. Default for tiny. Small: 2. Base: 1.
-    head : int = 1 # Number of transformer encoder head. Default for tiny & small. Base: 2.
-    embed_dim: int = 128 # Embedding or feature dim. To be reduced by --reduction.
-    kernel_size: int = 3 # Conv1d kernel size (Encoder). Default for tiny & small. Base is 5.
-    decoder_kernel_size: int = 5 # Conv1d kernel size (Decoder). Default for tiny, small & base: 5.
-    expansion: int = 1 # MixFFN expansion. Default for tiny & small. Base: 2.
+    block_depth: int = 2  # Decoder block depth. Default for tiny & small. Base:  3
+    n_blocks: int = 2  # Decoder blocks. Default for tiny. Small & base: 3.
+    reduction: int = 4  # Embed dim reduction factor. Default for tiny. Small: 2. Base: 1.
+    head: int = 1  # Number of transformer encoder head. Default for tiny & small. Base: 2.
+    embed_dim: int = 128  # Embedding or feature dim. To be reduced by --reduction.
+    kernel_size: int = 3  # Conv1d kernel size (Encoder). Default for tiny & small. Base is 5.
+    decoder_kernel_size: int = 5  # Conv1d kernel size (Decoder). Default for tiny, small & base: 5.
+    expansion: int = 1  # MixFFN expansion. Default for tiny & small. Base: 2.
 
     infer_device: Literal['cpu', 'gpu'] = 'cpu'
     hifigan_checkpoint: str = "LJ_V2/generator_v2"
-
 
 
 if __name__ == "__main__":
@@ -72,15 +71,19 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
 
     config = yaml.load(open(args.config, "r"), Loader=yaml.FullLoader)
-
+    preprocessing_config = PreprocessingConfig(**config["preprocessing"])
+    dataset_folder = DatasetFolder(root_path=Path(config["dataset"]["root_path"]),
+                                   ds_name=config["dataset"].get("name"))
     args.num_workers *= args.devices
     torch.set_float32_matmul_precision('high')
 
-    datamodule = OgmiosDataModule(preprocess_config=config,
+    datamodule = OgmiosDataModule(dataset_folder=dataset_folder,
+                                  preprocess_config=preprocessing_config,
                                   batch_size=args.batch_size,
                                   num_workers=args.num_workers)
 
-    model = EfficientSpeech(preprocess_config=config,
+    model = EfficientSpeech(dataset_folder=dataset_folder,
+                            preprocess_config=preprocessing_config,
                             lr=args.lr,
                             weight_decay=args.weight_decay,
                             max_epochs=args.max_epochs,

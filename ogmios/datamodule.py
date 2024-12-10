@@ -109,7 +109,7 @@ class OgmiosDataModule(LightningDataModule):
         return self.test_dataloader
 
     def val_dataloader(self):
-        return self.test_dataloader
+        return self.test_dataloader()
 
 
 class OgmiosDataset(Dataset):
@@ -131,9 +131,7 @@ class OgmiosDataset(Dataset):
 
         self.files_idx, self.phonemes, self.raw_texts = zip(*self.load_metadata())
         # building a {phone -> index} mapping to convert phonemes to a sequence of numbers
-        with open(self.dataset_folder.preprocessed_folder / "phones.json", "r") as f:
-            phones = json.load(f)
-        self.phonemes_mapping = {ph : i for i, ph in enumerate(phones)}
+        self.phonemes_mapping = {ph : i for i, ph in enumerate(dataset_folder.phonemes)}
 
     def __len__(self):
         return len(self.files_idx)
@@ -168,7 +166,7 @@ class OgmiosDataset(Dataset):
                     continue
 
                 phonemes = row[1].split("|")
-                if len(phonemes) > self.preprocess_config.max_text_length:
+                if len(phonemes) > self.preprocess_config.text.max_length:
                     continue
 
                 yield row[0], phonemes, row[2]
