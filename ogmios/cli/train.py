@@ -19,9 +19,9 @@ from lightning import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger
 from tap import Tap
 
-from ogmios.datamodule import LJSpeechDataModule
+from ogmios.datamodule import OgmiosDataModule
 from ogmios.model import EfficientSpeech
-from ogmios.tools import get_args
+from ogmios.utils import get_args
 
 
 def print_args(args):
@@ -76,9 +76,9 @@ if __name__ == "__main__":
     args.num_workers *= args.devices
     torch.set_float32_matmul_precision('high')
 
-    datamodule = LJSpeechDataModule(preprocess_config=config,
-                                    batch_size=args.batch_size,
-                                    num_workers=args.num_workers)
+    datamodule = OgmiosDataModule(preprocess_config=config,
+                                  batch_size=args.batch_size,
+                                  num_workers=args.num_workers)
 
     model = EfficientSpeech(preprocess_config=config,
                             lr=args.lr,

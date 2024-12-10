@@ -117,6 +117,7 @@ class AcousticDecoder(nn.Module):
         self.linear = nn.Linear(dim, 1)
         self.duration = duration
 
+        # TODO: switch to gaussian linspace, using pitch stats
         if pitch_stats is not None:
             pitch_min, pitch_max = pitch_stats
             self.pitch_bins = nn.Parameter(torch.linspace(pitch_min, pitch_max, dim - 1),

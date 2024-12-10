@@ -1,15 +1,14 @@
 dataset:
   name: "mls_1h"
-  root_path:  data/mls_1h/
+  root_path:  data/10032_1h/
 
 preprocessing:
-  val_size: 64
+  val_size: 16
+  sampling_rate: 22050
+
   text:
     language: "en"
     max_length: 4096
-  audio:
-    sampling_rate: 22050
-    max_wav_value: 32768.0
   stft:
     filter_length: 1024
     hop_length: 256
@@ -20,7 +19,7 @@ preprocessing:
     mel_fmax: 8000 # please set to 8000 for HiFi-GAN vocoder, set to null for MelGAN vocoder
   pitch:
     feature_level: "phoneme" # support 'phoneme' or 'frame'
-    normalization: True
+    normalization: False
   energy:
     feature_level: "phoneme" # support 'phoneme' or 'frame'
-    normalization: True
+    normalization: False

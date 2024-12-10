@@ -15,7 +15,7 @@ import torch
 from g2p_en import G2p
 
 from text import text_to_sequence
-from ogmios.tools import get_mask_from_lengths, synth_one_sample
+from ogmios.utils import get_mask_from_lengths, synth_one_sample
 
 
 def read_lexicon(lex_path):

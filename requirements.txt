@@ -24,4 +24,5 @@ pyworld
 sounddevice
 # sudo apt-get install portaudio19-dev
 typed-argument-parser
+phonemizer
 

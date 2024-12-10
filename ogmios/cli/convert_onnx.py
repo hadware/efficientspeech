@@ -13,7 +13,7 @@ import yaml
 
 from ogmios.layers import Phoneme2Mel
 from ogmios.model import EfficientSpeech, get_hifigan
-from ogmios.tools import get_args
+from ogmios.utils import get_args
 
 class OgmiosOnnx(torch.nn.Module):
     def __init__(self,

@@ -18,13 +18,14 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR
 
 from ogmios import hifigan
 from layers import PhonemeEncoder, MelDecoder, Phoneme2Mel
-from ogmios.tools import plot_spectrogram_to_numpy
+from ogmios.hifigan import HIFIGAN_MODELS_FOLDER
+from ogmios.utils import plot_spectrogram_to_numpy
 
 
-def get_hifigan(checkpoint="hifigan/LJ_V2/generator_v2", infer_device=None, verbose=False) -> hifigan.Generator:
+def get_hifigan(checkpoint: str, infer_device=None, verbose=False) -> hifigan.Generator:
     # get the main path
-    main_path = os.path.dirname(os.path.abspath(checkpoint))
-    json_config = os.path.join(main_path, "config.json")
+    main_path = HIFIGAN_MODELS_FOLDER / checkpoint
+    json_config = main_path / "config.json"
     if verbose:
         print("Using config: ", json_config)
         print("Using hifigan checkpoint: ", checkpoint)

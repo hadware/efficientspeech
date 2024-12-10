@@ -8,6 +8,7 @@ Apache 2.0 License
 
 import argparse
 import json
+import logging
 import os
 import time
 
@@ -17,6 +18,7 @@ import torch.nn.functional as F
 from matplotlib import pyplot as plt
 from scipy.io import wavfile
 
+logger = logging.getLogger("ogmios")
 
 
 def save_figure_to_numpy(fig, spectrogram=False):

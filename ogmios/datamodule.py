@@ -12,18 +12,21 @@ import torch
 from lightning import LightningDataModule
 from torch.utils.data import Dataset, DataLoader
 
-from text import text_to_sequence
-from ogmios.tools import get_mask_from_lengths
-from ogmios.tools import pad_1D, pad_2D
+from ogmios.dataset.commons import PreprocessingConfig, DatasetFolder
+from ogmios.phonemizers.ljspeech import text_to_sequence
+from ogmios.utils import get_mask_from_lengths
+from ogmios.utils import pad_1D, pad_2D
 
 
-class LJSpeechDataModule(LightningDataModule):
-    def __init__(self, preprocess_config, batch_size=64, num_workers=4):
-        super(LJSpeechDataModule, self).__init__()
+class OgmiosDataModule(LightningDataModule):
+    def __init__(self,
+                 preprocess_config: PreprocessingConfig,
+                 batch_size: int=64,
+                 num_workers: int=4):
+        super().__init__()
         self.preprocess_config = preprocess_config
         self.batch_size = batch_size
         self.num_workers = num_workers
-        # self.drop_last = True
         self.sort = True
 
     def collate_fn(self, batch):
@@ -77,15 +80,11 @@ class LJSpeechDataModule(LightningDataModule):
         return x, y
 
     def prepare_data(self):
-        self.train_dataset = LJSpeechDataset("train.txt",
-                                             self.preprocess_config)
+        self.train_dataset = OgmiosDataset("train.txt",
+                                           self.preprocess_config)
+        self.test_dataset = OgmiosDataset("val.txt",
+                                          self.preprocess_config)
 
-        # print("Train dataset size: {}".format(len(self.train_dataset)))
-
-        self.test_dataset = LJSpeechDataset("val.txt",
-                                            self.preprocess_config)
-
-        # print("Test dataset size: {}".format(len(self.test_dataset)))
 
     def setup(self, stage=None):
         self.prepare_data()
@@ -110,9 +109,13 @@ class LJSpeechDataModule(LightningDataModule):
         return self.test_dataloader()
 
 
-class LJSpeechDataset(Dataset):
-    def __init__(self, filename, preprocess_config, sort=False, drop_last=False):
-        self.dataset_name = preprocess_config["dataset"]
+class OgmiosDataset(Dataset):
+    def __init__(self,
+                 dataset_folder: DatasetFolder,
+                 preprocess_config: PreprocessingConfig,
+                 sort: bool=False,
+                 drop_last: bool=False):
+        self.dataset_folder = dataset_folder
         self.preprocessed_path = preprocess_config["path"]["preprocessed_path"]
         self.cleaners = preprocess_config["preprocessing"]["text"]["text_cleaners"]
         # self.batch_size = batch_size

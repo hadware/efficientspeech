@@ -6,7 +6,7 @@ import yaml
 
 from ogmios.model import get_hifigan
 from ogmios.synthesize import get_lexicon_and_g2p, text2phoneme
-from ogmios.tools import get_args
+from ogmios.utils import get_args
 
 ONNX_CPU_PROVIDERS = [
     "CPUExecutionProvider",
