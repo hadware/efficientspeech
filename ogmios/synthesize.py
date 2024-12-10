@@ -67,12 +67,12 @@ def text2phoneme(lexicon, g2p, text, preprocess_config, verbose=False):
 
 
 def synthesize(lexicon, g2p, args, phoneme2mel, hifigan, preprocess_config, verbose=False):
-    assert (args.text is not None)
+    assert (args.phonemes is not None)
 
     if verbose:
         start_time = time.time()
 
-    phoneme = np.array([text2phoneme(lexicon, g2p, args.text, preprocess_config)])
+    phoneme = np.array([text2phoneme(lexicon, g2p, args.phonemes, preprocess_config)])
     phoneme_len = np.array([len(phoneme[0])])
 
     phoneme = torch.from_numpy(phoneme).long()

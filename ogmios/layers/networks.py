@@ -8,10 +8,8 @@ Apache 2.0 License
 from typing import Optional
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 
-from ogmios.text.symbols import symbols
 from .blocks import MixFFN, SelfAttention
 
 
@@ -19,6 +17,7 @@ class Encoder(nn.Module):
     """ Phoneme Encoder """
 
     def __init__(self,
+                 alphabet_dim: int,
                  depth: int = 2,
                  embed_dim: int = 128,
                  kernel_size: int = 3,
@@ -37,8 +36,7 @@ class Encoder(nn.Module):
         strides = [2 for _ in range(depth - 1)]
         strides.insert(0, 1)
 
-        # TODO: number of symbols should be passed as an argument
-        self.embed = nn.Embedding(len(symbols) + 1, embed_dim, padding_idx=0)
+        self.embed = nn.Embedding(alphabet_dim + 1, embed_dim, padding_idx=0)
 
         self.attn_blocks = nn.ModuleList([])
         for dim_in, dim_out, head, kernel, stride, padding in zip(dim_ins, self.dim_outs, \
@@ -230,53 +228,6 @@ class Fuse(nn.Module):
         return fused_features
 
 
-class FeatureUpsampler(nn.Module):
-    """ Upsample fused features using target or predicted duration"""
-
-    # TODO: switch out for gaussianupsampler from optispeech
-
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, fused_features, fused_masks, duration, max_mel_len=None):
-        mel_len = list()
-        features = list()
-        masks = list()
-
-        for feature, mask, repetition in zip(fused_features, fused_masks, duration):
-            repetition = repetition.squeeze().int()
-            feature = feature.repeat_interleave(repetition, dim=0)
-            mask = mask.repeat_interleave(repetition, dim=0)
-            mel_len.append(feature.shape[0])
-            if max_mel_len is not None:
-                feature = F.pad(feature, (0, 0, 0, max_mel_len -
-                                          feature.shape[0]), "constant", 0.0)
-                mask = F.pad(mask, (0, 0, 0, max_mel_len -
-                                    mask.shape[0]), "constant", True)
-            features.append(feature)
-            masks.append(mask)
-
-        if max_mel_len is None:
-            max_mel_len = max(mel_len)
-            features = [F.pad(feature, (0, 0, 0, max_mel_len - feature.shape[0]),
-                              "constant", 0.0) for feature in features]
-            masks = [F.pad(mask, (0, 0, 0, max_mel_len - mask.shape[0]),
-                           "constant", True) for mask in masks]
-
-        features = torch.stack(features)
-        masks = torch.stack(masks)
-        len_pred = torch.IntTensor(mel_len).to(features.device)
-
-        return features, masks, len_pred
-
-    @torch.inference_mode()
-    def infer_one(self, fused_features: torch.Tensor, duration):
-        repetition = duration.squeeze().int()
-        fused_features = fused_features.squeeze()
-        features = fused_features.repeat_interleave(repetition, dim=0).unsqueeze(0)
-        return features
-
-
 class GaussianUpsampling(torch.nn.Module):
     """
     Gaussian upsampling with fixed temperature as in:
@@ -377,6 +328,7 @@ class PhonemeEncoder(nn.Module):
     """ Encodes phonemes to acoustic features """
 
     def __init__(self,
+                 alphabet_dim: int,
                  pitch_stats=None,
                  energy_stats=None,
                  depth=2,
@@ -387,12 +339,13 @@ class PhonemeEncoder(nn.Module):
                  expansion=1):
         super().__init__()
 
-        self.encoder = Encoder(depth=depth,
+        self.encoder = Encoder(alphabet_dim=alphabet_dim,
+                               depth=depth,
                                reduction=reduction,
                                head=head,
                                embed_dim=embed_dim,
                                kernel_size=kernel_size,
-                               expansion=expansion, )
+                               expansion=expansion)
 
         dim = embed_dim // reduction
         self.fuse = Fuse(self.encoder.get_feature_dims(), kernel_size=kernel_size)
@@ -515,6 +468,7 @@ class Phoneme2Mel(nn.Module):
         mel = self.decoder(pred["features"])
 
         mel_mask = pred["mel_mask"]
+        # masking mels based on mask computed by upsampler
         if mel_mask is not None and mel.size(0) > 1:
             mel_mask = mel_mask[:, :, :mel.shape[-1]]
             mel = mel.masked_fill(~mel_mask, 0)

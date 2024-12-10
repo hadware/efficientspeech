@@ -26,3 +26,4 @@ if __name__ == "__main__":
     preprocessor.process_files()
     preprocessor.save_splits()
     preprocessor.save_stats()
+    preprocessor.save_phones()

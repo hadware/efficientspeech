@@ -10,4 +10,6 @@ class ValidateCommand(Tap):
 if __name__ == "__main__":
     args = ValidateCommand().parse_args()
 
+    # TODO: check if required folders are here, and that all files are properly referenced
+
 

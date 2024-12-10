@@ -26,7 +26,7 @@ if __name__ == '__main__':
     onnx_session = onnxruntime.InferenceSession(args.checkpoint, providers=ONNX_CPU_PROVIDERS)
 
     # preparing text input
-    text = args.text.strip()
+    text = args.phonemes.strip()
     text = text.replace('-', ' ')
     phoneme = np.array(text2phoneme(lexicon, g2p, text, preprocess_config, verbose=args.verbose),
                        dtype=np.int32)

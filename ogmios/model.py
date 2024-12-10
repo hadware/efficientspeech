@@ -17,8 +17,9 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR
 
 from ogmios import hifigan
-from layers import PhonemeEncoder, MelDecoder, Phoneme2Mel
+from ogmios.dataset.commons import DatasetFolder, PreprocessingConfig
 from ogmios.hifigan import HIFIGAN_MODELS_FOLDER
+from ogmios.layers import PhonemeEncoder, MelDecoder, Phoneme2Mel
 from ogmios.utils import plot_spectrogram_to_numpy
 
 
@@ -108,7 +109,8 @@ def get_lr_scheduler(optimizer, warmup_steps, total_steps, min_lr=0):
 
 class EfficientSpeech(LightningModule):
     def __init__(self,
-                 preprocess_config,
+                 dataset_folder: DatasetFolder,
+                 preprocess_config: PreprocessingConfig,
                  lr=1e-3,
                  weight_decay=1e-6,
                  max_epochs=5000,
@@ -128,12 +130,16 @@ class EfficientSpeech(LightningModule):
 
         self.save_hyperparameters()
 
-        with open(os.path.join(preprocess_config["path"]["preprocessed_path"], "stats.json")) as f:
-            stats = json.load(f)
-            pitch_stats = stats["pitch"][:2]
-            energy_stats = stats["energy"][:2]
+        with open(dataset_folder.preprocessed_folder / "phones.json") as f:
+            phonemes = json.load(f)
 
-        phoneme_encoder = PhonemeEncoder(pitch_stats=pitch_stats,
+        with open(dataset_folder.preprocessed_folder / "stats.json") as f:
+            stats = json.load(f)
+            pitch_stats = stats["pitch"]
+            energy_stats = stats["energy"]
+
+        phoneme_encoder = PhonemeEncoder(alphabet_dim=len(phonemes),
+                                         pitch_stats=pitch_stats,
                                          energy_stats=energy_stats,
                                          depth=depth,
                                          reduction=reduction,
@@ -252,13 +258,14 @@ class EfficientSpeech(LightningModule):
             mels_len = mels_len.int()
             self.logger.experiment.add_image(
                 "mel/pred",
-                plot_spectrogram_to_numpy(mels_pred[0,:,:mels_len[0]].cpu().numpy()),
+                plot_spectrogram_to_numpy(mels_pred[0, :, :mels_len[0]].cpu().numpy()),
                 self.global_step, dataformats="HWC"
             )
             self.logger.experiment.add_audio(tag="wav/predicted",
                                              snd_tensor=wavs[0],
                                              global_step=self.global_step,
-                                             sample_rate=self.hparams.preprocess_config["preprocessing"]["audio"]["sampling_rate"])
+                                             sample_rate=self.hparams.preprocess_config["preprocessing"]["audio"][
+                                                 "sampling_rate"])
 
             # then logging resynthesis of ground truth mel (through hifigan)
             mel = y["mel"]
@@ -271,17 +278,14 @@ class EfficientSpeech(LightningModule):
                 self.logger.experiment.add_audio(tag="wav/resynth",
                                                  snd_tensor=wavs[0],
                                                  global_step=self.global_step,
-                                                 sample_rate=self.hparams.preprocess_config["preprocessing"]["audio"]["sampling_rate"])
-
-
+                                                 sample_rate=self.hparams.preprocess_config["preprocessing"]["audio"][
+                                                     "sampling_rate"])
 
                 self.logger.experiment.add_image(
                     "mel/target",
-                    plot_spectrogram_to_numpy(mel[0,:,:mel_lengths[0]].cpu().numpy()),
+                    plot_spectrogram_to_numpy(mel[0, :, :mel_lengths[0]].cpu().numpy()),
                     self.global_step, dataformats="HWC"
                 )
-
-
 
     def on_test_epoch_end(self):
         pass

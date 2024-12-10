@@ -30,7 +30,7 @@ from ogmios.utils import get_args
 
 
 def tts(lexicon, g2p, preprocess_config, model: EfficientSpeech, hifigan, args, verbose=False):
-    text = args.text.strip()
+    text = args.phonemes.strip()
     text = text.replace('-', ' ')
     phoneme = np.array([text2phoneme(lexicon, g2p, text, preprocess_config, verbose=verbose)],
                        dtype=np.int32)
@@ -91,7 +91,7 @@ if __name__ == "__main__":
         sd.default.device = None
         sd.default.latency = 'low'
 
-    if args.text is not None:
+    if args.phonemes is not None:
         rtf = []
         warmup = 10
         for i in range(args.iter):

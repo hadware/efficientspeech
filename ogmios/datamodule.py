@@ -4,8 +4,9 @@ https://ieeexplore.ieee.org/abstract/document/10094639
 Rowel Atienza, 2023
 Apache 2.0 License
 '''
-
-import os
+import csv
+import json
+from typing import Literal
 
 import numpy as np
 import torch
@@ -13,18 +14,19 @@ from lightning import LightningDataModule
 from torch.utils.data import Dataset, DataLoader
 
 from ogmios.dataset.commons import PreprocessingConfig, DatasetFolder
-from ogmios.phonemizers.ljspeech import text_to_sequence
 from ogmios.utils import get_mask_from_lengths
 from ogmios.utils import pad_1D, pad_2D
 
 
 class OgmiosDataModule(LightningDataModule):
     def __init__(self,
+                 dataset_folder: DatasetFolder,
                  preprocess_config: PreprocessingConfig,
-                 batch_size: int=64,
-                 num_workers: int=4):
+                 batch_size: int = 64,
+                 num_workers: int = 4):
         super().__init__()
         self.preprocess_config = preprocess_config
+        self.dataset_folder = dataset_folder
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.sort = True
@@ -73,18 +75,19 @@ class OgmiosDataModule(LightningDataModule):
              "mel_mask": mel_mask,
              "pitch": pitches,
              "energy": energies,
-             "duration": durations, }
+             "duration": durations}
 
-        y = {"mel": mels, }
+        y = {"mel": mels}
 
         return x, y
 
     def prepare_data(self):
-        self.train_dataset = OgmiosDataset("train.txt",
-                                           self.preprocess_config)
-        self.test_dataset = OgmiosDataset("val.txt",
-                                          self.preprocess_config)
-
+        self.train_dataset = OgmiosDataset(self.dataset_folder,
+                                           self.preprocess_config,
+                                           "train")
+        self.test_dataset = OgmiosDataset(self.dataset_folder,
+                                          self.preprocess_config,
+                                          "val")
 
     def setup(self, stage=None):
         self.prepare_data()
@@ -106,57 +109,48 @@ class OgmiosDataModule(LightningDataModule):
         return self.test_dataloader
 
     def val_dataloader(self):
-        return self.test_dataloader()
+        return self.test_dataloader
 
 
 class OgmiosDataset(Dataset):
     def __init__(self,
                  dataset_folder: DatasetFolder,
                  preprocess_config: PreprocessingConfig,
-                 sort: bool=False,
-                 drop_last: bool=False):
+                 split: Literal["train", "val"],
+                 sort: bool = False,
+                 drop_last: bool = False):
         self.dataset_folder = dataset_folder
-        self.preprocessed_path = preprocess_config["path"]["preprocessed_path"]
-        self.cleaners = preprocess_config["preprocessing"]["text"]["text_cleaners"]
-        # self.batch_size = batch_size
-        self.max_text_length = preprocess_config["preprocessing"]["text"]["max_length"]
-        self.basename, self.text, self.raw_text = self.process_meta(filename)
+        self.split = split
+        self.preprocess_config = preprocess_config
         self.sort = sort
         self.drop_last = drop_last
 
+        # loading split ids
+        with open(self.dataset_folder.preprocessed_folder / f"{split}.txt", "r") as f:
+            self.split_idx = set(f.read().split("\n"))
+
+        self.files_idx, self.phonemes, self.raw_texts = zip(*self.load_metadata())
+        # building a {phone -> index} mapping to convert phonemes to a sequence of numbers
+        with open(self.dataset_folder.preprocessed_folder / "phones.json", "r") as f:
+            phones = json.load(f)
+        self.phonemes_mapping = {ph : i for i, ph in enumerate(phones)}
+
     def __len__(self):
-        return len(self.text)
+        return len(self.files_idx)
+
+    def phonemes_to_sequence(self, phonemes: list[str]) -> np.ndarray[np.int32]:
+        return np.array([self.phonemes_mapping[p] for p in phonemes])
 
     def __getitem__(self, idx):
-        basename = self.basename[idx]
-        raw_text = self.raw_text[idx]
-        phoneme = np.array(text_to_sequence(self.text[idx], self.cleaners))
-        mel_path = os.path.join(
-            self.preprocessed_path,
-            "mel",
-            f"mel-{basename}.npy",
-        )
-        mel = np.load(mel_path)
-        pitch_path = os.path.join(
-            self.preprocessed_path,
-            "pitch",
-            f"pitch-{basename}.npy",
-        )
-        pitch = np.load(pitch_path)
-        energy_path = os.path.join(
-            self.preprocessed_path,
-            "energy",
-            f"energy-{basename}.npy",
-        )
-        energy = np.load(energy_path)
-        duration_path = os.path.join(
-            self.preprocessed_path,
-            "duration",
-            f"duration-{basename}.npy",
-        )
-        duration = np.load(duration_path)
+        basename = self.files_idx[idx]
+        raw_text = self.raw_texts[idx]
+        phonemes_seq = self.phonemes_to_sequence(self.phonemes[idx])
+        mel = np.load(self.dataset_folder.mels_folder / f"{basename}.npy")
+        pitch = np.load(self.dataset_folder.pitches_folder / f"{basename}.npy")
+        energy = np.load(self.dataset_folder.energies_folder / f"{basename}.npy")
+        duration = np.load(self.dataset_folder.durations_folder / f"{basename}.npy")
 
-        x = {"phoneme": phoneme,
+        x = {"phoneme": phonemes_seq,
              "text": raw_text,
              "pitch": pitch,
              "energy": energy,
@@ -166,18 +160,15 @@ class OgmiosDataset(Dataset):
 
         return x, y
 
-    def process_meta(self, filename):
-        with open(
-                os.path.join(self.preprocessed_path, filename), "r", encoding="utf-8"
-        ) as f:
-            name = []
-            text = []
-            raw_text = []
-            for line in f.readlines():
-                n, t, r = line.strip("\n").split("|")
-                if len(r) > self.max_text_length:
+    def load_metadata(self):
+        with open(self.dataset_folder.preprocessed_folder / "metadata.csv", "r") as f:
+            csv_reader = csv.reader(f, delimiter="\t")
+            for row in csv_reader:
+                if row[0] not in self.split_idx:
                     continue
-                name.append(n)
-                text.append(t)
-                raw_text.append(r)
-            return name, text, raw_text
+
+                phonemes = row[1].split("|")
+                if len(phonemes) > self.preprocess_config.max_text_length:
+                    continue
+
+                yield row[0], phonemes, row[2]
