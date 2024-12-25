@@ -1,0 +1,24 @@
+dataset:
+  root_path:  data/mls_24h_reseg/
+
+preprocessing:
+  val_size: 128
+  sampling_rate: 22050
+
+  text:
+    language: "en"
+    max_length: 4096
+  stft:
+    filter_length: 1024
+    hop_length: 256
+    win_length: 1024
+  mel:
+    n_mel_channels: 80
+    mel_fmin: 0
+    mel_fmax: 8000 # please set to 8000 for HiFi-GAN vocoder, set to null for MelGAN vocoder
+  pitch:
+    feature_level: "phoneme" # support 'phoneme' or 'frame'
+    normalization: False
+  energy:
+    feature_level: "phoneme" # support 'phoneme' or 'frame'
+    normalization: False

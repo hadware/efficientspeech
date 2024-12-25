@@ -35,8 +35,8 @@ if __name__ == "__main__":
 
     model = EfficientSpeech.load_from_checkpoint(args.checkpoint, map_location=torch.device('cpu'))
     model = model.to(args.infer_device)
-    hifigan = get_hifigan(checkpoint="hifigan/LJ_V2/generator_v2",
-                          infer_device=args.infer_device, verbose=args.verbose)
+    # hifigan = get_hifigan(checkpoint="hifigan/LJ_V2/generator_v2",
+    #                       infer_device=args.infer_device, verbose=args.verbose)
 
     ogmios_model = OgmiosOnnx(phon2mel=model.phoneme2mel)
 
@@ -49,7 +49,6 @@ if __name__ == "__main__":
                       f="ogmios_onnx.onnx",
                       args=tuple(sample_input),
                       opset_version=args.onnx_opset,
-                      do_constant_folding=True,
                       input_names=["x"],
                       output_names=["mel"],
                       dynamic_axes={

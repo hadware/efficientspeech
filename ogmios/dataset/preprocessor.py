@@ -12,13 +12,13 @@ from scipy.interpolate import interp1d
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from tqdm import tqdm
 
-from .aligments import AlignmentFile
+from .aligments import AlignmentFile, Interval
 from .commons import DatasetFolder, PreprocessingConfig, AcousticStats
 from ..audio.stft import TacotronSTFT
 from ..utils import logger
 
 
-class PitchProcessingError(Exception):
+class ProcessingError(Exception):
     pass
 
 
@@ -40,13 +40,29 @@ class DatasetPreprocessor:
             mel_fmax=config.mel.mel_fmax,
         )
 
+    def remove_trailing_silences(self, phones : list[Interval]):
+        dead_phones = {"sil", "sp", "spn"}
+        while phones:
+            if phones[0].annot in dead_phones:
+                phones.pop(0)
+            else:
+                break
+        while phones:
+            if phones[-1].annot in dead_phones:
+                phones.pop(-1)
+            else:
+                break
+        return phones
+
     def post_process_alignments(self, aligments: AlignmentFile) \
             -> tuple[list[str], np.ndarray, float, float]:
-        # TODO : look back into this again: silences should be just trimmed and not completely filtered out
-        dead_phones = {"sil", "sp", "spn"}
-        # filtering out silent phones
-        filtered_phones = [p for p in aligments.phones.intervals if p.annot not in dead_phones]
-        starts, ends, filtered_phones = zip(*((p.start, p.end, p.annot) for p in filtered_phones))
+
+        # triming out silent phones at start and beginning
+        phones_intervals = self.remove_trailing_silences(list(aligments.phones.intervals))
+        if not phones_intervals:
+            raise ProcessingError("No phones in segment")
+        # TODO: investigate negative durations
+        starts, ends, filtered_phones = zip(*((p.start, p.end, p.annot) for p in phones_intervals))
         starts = np.array(starts)
         ends = np.array(ends)
         sampling_factor = self.config.sampling_rate / self.config.stft.hop_length
@@ -66,7 +82,7 @@ class DatasetPreprocessor:
 
         pitch = pitch[: durations.sum()]
         if np.sum(pitch != 0) <= 1:
-            raise PitchProcessingError("Invalid pitch: all values null")
+            raise ProcessingError("Invalid pitch: all values null")
 
         if self.config.pitch.feature_level == "phoneme":
             # do pitch averaging per phoneme via linear interpolation
@@ -90,7 +106,7 @@ class DatasetPreprocessor:
             pitch = pitch[: len(durations)]
 
         if len(pitch) == 0:
-            raise PitchProcessingError("No pitch values")
+            raise ProcessingError("No pitch values")
 
         return pitch
 
@@ -161,15 +177,18 @@ class DatasetPreprocessor:
             for wav_path, align_path in tqdm(list(self.dataset)):
                 try:
                     phones, pitch, energy, total_frames = self.process_utterance(wav_path, align_path)
-                except PitchProcessingError:
+                except ProcessingError:
                     continue
+                pitch = self.remove_outlier(pitch)
+                energy = self.remove_outlier(energy)
+
+                if len(pitch) == 0 or len(energy) == 0:
+                    continue
+
                 csv_writer.writerow([
                     wav_path.stem,
                     "|".join(phones),
                     transcripts[wav_path.stem]])
-
-                pitch = self.remove_outlier(pitch)
-                energy = self.remove_outlier(energy)
 
                 self.valid_ids.add(wav_path.stem)
                 self.all_phones.update(phones)

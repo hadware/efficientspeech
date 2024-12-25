@@ -98,11 +98,10 @@ class Encoder(nn.Module):
 
 class AcousticDecoder(nn.Module):
     """ Pitch, Duration, Energy Predictor """
-    # TODO: simplify (just one function for embeddings, maybe two for one with inference
+
 
     def __init__(self, dim: int,
-                 pitch_stats=None,
-                 energy_stats=None,
+                 acoustic_stats=None,
                  n_mel_channels: int = 80,
                  duration=False):
         super().__init__()
@@ -116,47 +115,30 @@ class AcousticDecoder(nn.Module):
         self.linear = nn.Linear(dim, 1)
         self.duration = duration
 
-        # TODO: switch to gaussian linspace, using pitch stats
-        if pitch_stats is not None:
-            pitch_min, pitch_max = pitch_stats["min"], pitch_stats["max"]
-            self.pitch_bins = nn.Parameter(torch.linspace(pitch_min, pitch_max, dim - 1),
-                                           requires_grad=False, )
-            self.pitch_embedding = nn.Embedding(dim, dim)
+        if acoustic_stats is not None:
+            gaussian_bins = self.gaussian_bins(acoustic_stats["mean"], acoustic_stats["std"], dim)
+            self.bins = nn.Parameter(gaussian_bins, requires_grad=False, )
+            self.acoustic_embedding = nn.Embedding(dim, dim)
         else:
-            self.pitch_bins = None
-            self.pitch_embedding = None
+            self.bins = None
+            self.acoustic_embedding = None
 
-        if energy_stats is not None:
-            energy_min, energy_max = energy_stats["min"], energy_stats["max"]
-            self.energy_bins = nn.Parameter(torch.linspace(energy_min, energy_max, dim - 1),
-                                            requires_grad=False, )
-            self.energy_embedding = nn.Embedding(dim, dim)
-        else:
-            self.energy_bins = None
-            self.energy_embedding = None
-
-    def get_pitch_embedding(self, pred, target, mask, control=1.):
-        if target is not None:
-            embedding = self.pitch_embedding(torch.bucketize(target, self.pitch_bins))
-        else:
-            # pred = pred * control
-            embedding = self.pitch_embedding(torch.bucketize(pred, self.pitch_bins))
-        return embedding
-
-    def get_energy_embedding(self, pred, target, mask, control=1.):
-        if target is not None:
-            embedding = self.energy_embedding(torch.bucketize(target, self.energy_bins))
-        else:
-            # pred = pred * control
-            embedding = self.energy_embedding(torch.bucketize(pred, self.energy_bins))
-        return embedding
+    @staticmethod
+    def gaussian_bins(mean: float, std: float, num_bins: int):
+        # Create evenly spaced points in [0, 1]
+        uniform_points = torch.linspace(0, 1, num_bins)  # num_bins + 1 for edges
+        # Define a normal distribution
+        normal_dist = torch.distributions.Normal(mean, std)
+        # Transform uniform points to the Gaussian scale
+        bins = normal_dist.icdf(uniform_points)
+        return bins
 
     def get_embedding(self, pred, target, mask, control=1.):
-        if self.pitch_embedding is not None:
-            return self.get_pitch_embedding(pred, target, mask, control)
-        elif self.energy_embedding is not None:
-            return self.get_energy_embedding(pred, target, mask, control)
-        return None
+        if target is not None:
+            return self.acoustic_embedding(torch.bucketize(target, self.bins))
+        else:
+            # pred = pred * control
+            return self.acoustic_embedding(torch.bucketize(pred, self.bins))
 
     def forward(self, fused_features):
         y = fused_features.permute(0, 2, 1)
@@ -216,7 +198,6 @@ class Fuse(nn.Module):
                 x = x[:, :, :fused_features[0].shape[-1]]
 
             fused_features.append(x)
-            # print(x.size())
 
         # cat on the feature dim
         fused_features = torch.cat(fused_features, dim=-2)
@@ -299,9 +280,9 @@ class MelDecoder(nn.Module):
         for _ in range(n_blocks):
             conv = nn.ModuleList([])
             for _ in range(block_depth):
-                conv.append(nn.ModuleList([nn.Sequential( \
-                    nn.Conv1d(dim_x2, dim_x2, groups=dim_x2, kernel_size=kernel_size, padding=padding), \
-                    nn.Conv1d(dim_x2, dim_x2, kernel_size=1), \
+                conv.append(nn.ModuleList([nn.Sequential(
+                    nn.Conv1d(dim_x2, dim_x2, groups=dim_x2, kernel_size=kernel_size, padding=padding),
+                    nn.Conv1d(dim_x2, dim_x2, kernel_size=1),
                     nn.Tanh(), ),
                     nn.LayerNorm(dim_x2)]))
 
@@ -351,8 +332,8 @@ class PhonemeEncoder(nn.Module):
         dim = embed_dim // reduction
         self.fuse = Fuse(self.encoder.get_feature_dims(), kernel_size=kernel_size)
         self.feature_upsampler = GaussianUpsampling()
-        self.pitch_decoder = AcousticDecoder(dim, pitch_stats=pitch_stats)
-        self.energy_decoder = AcousticDecoder(dim, energy_stats=energy_stats)
+        self.pitch_decoder = AcousticDecoder(dim, acoustic_stats=pitch_stats)
+        self.energy_decoder = AcousticDecoder(dim, acoustic_stats=energy_stats)
         self.duration_decoder = AcousticDecoder(dim, duration=True)
 
     def forward(self, x, train=False):
