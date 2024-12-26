@@ -99,7 +99,6 @@ class Encoder(nn.Module):
 class AcousticDecoder(nn.Module):
     """ Pitch, Duration, Energy Predictor """
 
-
     def __init__(self, dim: int,
                  acoustic_stats=None,
                  n_mel_channels: int = 80,
@@ -264,8 +263,11 @@ class GaussianUpsampling(torch.nn.Module):
 class MelDecoder(nn.Module):
     """ Mel Spectrogram Decoder """
 
-    def __init__(self, dim, kernel_size=5, n_mel_channels=80,
-                 n_blocks=2, block_depth=2, ):
+    def __init__(self, dim,
+                 kernel_size: int = 5,
+                 n_mel_channels: int = 80,
+                 n_blocks: int = 2,
+                 block_depth: int = 2):
         super().__init__()
 
         self.n_mel_channels = n_mel_channels
@@ -311,14 +313,14 @@ class PhonemeEncoder(nn.Module):
 
     def __init__(self,
                  alphabet_dim: int,
-                 pitch_stats=None,
-                 energy_stats=None,
-                 depth=2,
-                 reduction=4,
-                 head=1,
-                 embed_dim=128,
-                 kernel_size=3,
-                 expansion=1):
+                 pitch_stats: Optional[dict[str, float]] = None,
+                 energy_stats: Optional[dict[str, float]] = None,
+                 depth: int = 2,
+                 reduction: int = 4,
+                 head: int = 1,
+                 embed_dim: int = 128,
+                 kernel_size: int = 3,
+                 expansion: int = 1):
         super().__init__()
 
         self.encoder = Encoder(alphabet_dim=alphabet_dim,
