@@ -2,18 +2,18 @@ dataset:
   root_path:  data/mls_6h_reseg/
 
 preprocessing:
-  val_size: 32
-  sampling_rate: 22050
+  val_size: 8
+  sampling_rate: 16000
 
   text:
     language: "en"
     max_length: 4096
   stft:
     filter_length: 1024
-    hop_length: 256
+    hop_length: 160
     win_length: 1024
   mel:
-    n_mel_channels: 80
+    n_mel_channels: 128
     mel_fmin: 0
     mel_fmax: 8000 # please set to 8000 for HiFi-GAN vocoder, set to null for MelGAN vocoder
   pitch:

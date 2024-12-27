@@ -4,7 +4,7 @@ import onnxruntime
 import torch
 import yaml
 
-from ogmios.model import get_hifigan
+from ogmios.trainer import get_hifigan
 from ogmios.synthesize import get_lexicon_and_g2p, text2phoneme
 from ogmios.utils import get_args
 

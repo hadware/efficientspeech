@@ -21,7 +21,7 @@ from tap import Tap
 
 from ogmios.datamodule import OgmiosDataModule
 from ogmios.dataset.commons import PreprocessingConfig, DatasetFolder
-from ogmios.model import EfficientSpeech
+from ogmios.trainer import EfficientSpeech
 
 
 def print_args(args):
@@ -62,8 +62,7 @@ class TrainCommandParser(Tap):
     decoder_kernel_size: int = 5  # Conv1d kernel size (Decoder). Default for tiny, small & base: 5.
     expansion: int = 1  # MixFFN expansion. Default for tiny & small. Base: 2.
 
-    infer_device: Literal['cpu', 'gpu'] = 'cpu'
-    hifigan_checkpoint: str = "LJ_V2/generator_v2"
+    hifigan_onnx_path: Path = Path("hifigan/hifigan_16k_light.onnx")
 
 
 if __name__ == "__main__":
@@ -96,9 +95,7 @@ if __name__ == "__main__":
                             kernel_size=args.kernel_size,
                             decoder_kernel_size=args.decoder_kernel_size,
                             expansion=args.expansion,
-                            hifigan_checkpoint=args.hifigan_checkpoint,
-                            infer_device=args.infer_device,
-                            verbose=args.verbose)
+                            hifigan_onnx_path=args.hifigan_onnx_path)
 
     if args.verbose:
         print_args(args)
