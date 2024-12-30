@@ -6,76 +6,20 @@ Apache 2.0 License
 2023
 '''
 
-import json
 import math
+from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn as nn
 from lightning import LightningModule
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR
+from torch.optim.lr_scheduler import LambdaLR
 
-from ogmios import hifigan
 from ogmios.dataset.commons import DatasetFolder, PreprocessingConfig
-from ogmios.hifigan import HIFIGAN_MODELS_FOLDER
+from ogmios.hifigan import HifiganOnnxModel
 from ogmios.layers import PhonemeEncoder, MelDecoder, Phoneme2Mel
 from ogmios.utils import plot_spectrogram_to_numpy
-
-
-def get_hifigan(checkpoint: str, infer_device=None, verbose=False) -> hifigan.Generator:
-    # get the main path
-    main_path = HIFIGAN_MODELS_FOLDER / checkpoint
-    json_config = main_path.parent / "config.json"
-    if verbose:
-        print("Using config: ", json_config)
-        print("Using hifigan checkpoint: ", checkpoint)
-    with open(json_config, "r") as f:
-        config = json.load(f)
-
-    config = hifigan.AttrDict(config)
-    torch.manual_seed(config.seed)
-    vocoder = hifigan.Generator(config)
-    if infer_device is not None:
-        vocoder.to(infer_device)
-        ckpt = torch.load(main_path, map_location=torch.device(infer_device), weights_only=True)
-    else:
-        ckpt = torch.load(main_path)
-        # ckpt = torch.load("hifigan/generator_LJSpeech.pth.tar")
-    vocoder.load_state_dict(ckpt["generator"])
-    vocoder.eval()
-    vocoder.remove_weight_norm()
-    for p in vocoder.parameters():
-        p.requires_grad = False
-
-    return vocoder
-
-
-# bard
-def linear_warmup_cosine_annealing_lr(optimizer, num_warmup_steps, num_training_steps, max_lr):
-    """
-    Implements a learning rate scheduler with linear warm up and then cosine learning rate decay.
-
-    Args:
-        optimizer: The optimizer to use.
-        num_warmup_steps: The number of steps to use for linear warm up.
-        num_training_steps: The total number of training steps.
-        max_lr: The maximum learning rate.
-
-    Returns:
-        A learning rate scheduler.
-    """
-    scheduler = CosineAnnealingLR(optimizer, num_training_steps, eta_min=0)
-
-    def lr_lambda(current_step: int):
-        if current_step < num_warmup_steps:
-            return float(current_step) / float(max(1, num_warmup_steps))
-        else:
-            return 0.5 * (1.0 + math.cos(
-                math.pi * (current_step - num_warmup_steps) / float(num_training_steps - num_warmup_steps)))
-
-    scheduler.set_lambda(lr_lambda)
-
-    return scheduler
 
 
 # chatgpt
@@ -110,22 +54,20 @@ class EfficientSpeech(LightningModule):
     def __init__(self,
                  dataset_folder: DatasetFolder,
                  preprocess_config: PreprocessingConfig,
-                 lr=1e-3,
-                 weight_decay=1e-6,
-                 max_epochs=5000,
-                 depth=2,
-                 n_blocks=2,
-                 block_depth=2,
-                 reduction=4,
-                 head=1,
-                 embed_dim=128,
-                 kernel_size=3,
-                 decoder_kernel_size=3,
-                 expansion=1,
-                 hifigan_checkpoint="hifigan/LJ_V2/generator_v2",
-                 infer_device=None,
-                 verbose=False):
-        super(EfficientSpeech, self).__init__()
+                 lr: float = 1e-3,
+                 weight_decay: float = 1e-6,
+                 max_epochs: int = 5000,
+                 depth: int = 2,
+                 n_blocks: int = 2,
+                 block_depth: int = 2,
+                 reduction: int = 4,
+                 head: int = 1,
+                 embed_dim: int = 128,
+                 kernel_size: int = 3,
+                 decoder_kernel_size: int = 3,
+                 expansion: int = 1,
+                 hifigan_onnx_path: Path = None):
+        super().__init__()
 
         self.save_hyperparameters()
 
@@ -140,6 +82,7 @@ class EfficientSpeech(LightningModule):
                                          expansion=expansion)
 
         mel_decoder = MelDecoder(dim=embed_dim // reduction,
+                                 n_mel_channels=preprocess_config.mel.n_mel_channels,
                                  kernel_size=decoder_kernel_size,
                                  n_blocks=n_blocks,
                                  block_depth=block_depth)
@@ -147,20 +90,25 @@ class EfficientSpeech(LightningModule):
         self.phoneme2mel = Phoneme2Mel(encoder=phoneme_encoder,
                                        decoder=mel_decoder)
 
-        self.hifigan = get_hifigan(checkpoint=hifigan_checkpoint,
-                                   infer_device=infer_device, verbose=verbose)
+        self.hifigan = HifiganOnnxModel(hifigan_onnx_path)
 
         self.training_step_outputs = []
 
     def forward(self, x):
-        return self.phoneme2mel(x, train=True) if self.training else self.predict_step(x)
+        return self.phoneme2mel(x, train=self.training)
 
     def predict_step(self, batch, batch_idx=0, dataloader_idx=0):
-        mel, mel_len, duration = self.phoneme2mel(batch, train=False)
-        mel = mel.transpose(1, 2)
-        wav = self.hifigan(mel).squeeze(1)
+        batch_mels, batch_mel_lens, batch_durations = self.phoneme2mel(batch, train=False)
+        batch_mels = batch_mels.transpose(1, 2)
+        batch_mel_lens = batch_mel_lens.int()
+        predictions = []
+        with torch.no_grad():
+            for mel, mel_len, duration in zip(batch_mels, batch_mel_lens, batch_durations):
+                mel = mel[:, :mel_len]
+                wav = self.hifigan.synth(mel.cpu().numpy().astype(np.float32))
+                predictions.append((wav, mel))
 
-        return wav, mel, mel_len, duration
+        return predictions
 
     def loss(self, y_hat, y, x):
         pitch_pred = y_hat["pitch"]
@@ -239,41 +187,45 @@ class EfficientSpeech(LightningModule):
         self.training_step_outputs.clear()
 
     def validation_step(self, batch, batch_idx):
-        # TODO: use predict step for wav file generation
 
-        if batch_idx == 0 and self.current_epoch >= 1:
-            # first logging predictions from eval batch
-            x, y = batch
-            wavs, mels_pred, mels_len, _ = self.forward(x)
-            wavs = wavs.to(torch.float).cpu()
-            mels_len = mels_len.int()
+        if batch_idx != 0 or self.current_epoch < 1:
+            return
+
+        # first logging predictions from eval batch
+        x, y = batch
+        mels_gt = y["mel"]
+        mel_lens_gt = x["mel_len"]
+        for i, (wav, mels_pred) in enumerate(self.predict_step(x)):
+            mels_pred = mels_pred.cpu().numpy()
+
             self.logger.experiment.add_image(
-                "mel/pred",
-                plot_spectrogram_to_numpy(mels_pred[0, :, :mels_len[0]].cpu().numpy()),
-                self.global_step, dataformats="HWC"
+                f"mel/pred_{i}",
+                plot_spectrogram_to_numpy(mels_pred),
+                global_step=self.global_step,
+                dataformats="HWC"
             )
-            self.logger.experiment.add_audio(tag="wav/predicted",
-                                             snd_tensor=wavs[0],
-                                             global_step=self.global_step,
-                                             sample_rate=self.hparams.preprocess_config.sampling_rate)
+            self.logger.experiment.add_audio(
+                tag=f"wav/predicted_{i}",
+                snd_tensor=wav,
+                global_step=self.global_step,
+                sample_rate=self.hparams.preprocess_config.sampling_rate)
 
             # then logging resynthesis of ground truth mel (through hifigan)
-            mel = y["mel"]
-            mel = mel.transpose(1, 2)
-            mel_lengths = x["mel_len"]
             with torch.no_grad():
-                wavs = self.hifigan(mel).squeeze(1)
-                wavs = wavs.to(torch.float).cpu()
+                mel_gt = mels_gt[i, :mel_lens_gt[i], :].cpu().numpy().transpose(1,0)
+                wav_gt = self.hifigan.synth(mel_gt)
 
-                self.logger.experiment.add_audio(tag="wav/resynth",
-                                                 snd_tensor=wavs[0],
-                                                 global_step=self.global_step,
-                                                 sample_rate=self.hparams.preprocess_config.sampling_rate)
+                self.logger.experiment.add_audio(
+                    tag=f"wav/resynth_{i}",
+                    snd_tensor=wav_gt,
+                    global_step=self.global_step,
+                    sample_rate=self.hparams.preprocess_config.sampling_rate)
 
                 self.logger.experiment.add_image(
-                    "mel/target",
-                    plot_spectrogram_to_numpy(mel[0, :, :mel_lengths[0]].cpu().numpy()),
-                    self.global_step, dataformats="HWC"
+                    f"mel/target_{i}",
+                    plot_spectrogram_to_numpy(mel_gt),
+                    global_step=self.global_step,
+                    dataformats="HWC"
                 )
 
     def on_test_epoch_end(self):
