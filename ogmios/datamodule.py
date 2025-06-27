@@ -5,10 +5,10 @@ Rowel Atienza, 2023
 Apache 2.0 License
 '''
 import csv
-import json
-from typing import Literal
+from typing import Literal, TypedDict
 
 import numpy as np
+from numpy.typing import NDArray
 import torch
 from lightning import LightningDataModule
 from torch.utils.data import Dataset, DataLoader
@@ -16,6 +16,29 @@ from torch.utils.data import Dataset, DataLoader
 from ogmios.dataset.commons import PreprocessingConfig, DatasetFolder
 from ogmios.utils import get_mask_from_lengths
 from ogmios.utils import pad_1D, pad_2D
+
+
+class OgmiosSample(TypedDict):
+    phoneme: NDArray[np.int32]
+    text: str
+    pitch: NDArray[np.float32]
+    energy: NDArray[np.float32]
+    duration: NDArray[np.float32]
+
+class OgmiosGroundTruth(TypedDict):
+    mel: NDArray[np.float32]
+
+
+class OgmiosBatch(TypedDict):
+    phoneme: torch.Tensor
+    phoneme_len: torch.Tensor
+    phoneme_mask: torch.Tensor
+    text: list[str]
+    mel_len: torch.Tensor
+    mel_mask: torch.Tensor
+    pitch: torch.Tensor
+    energy: torch.Tensor
+    duration: torch.Tensor
 
 
 class OgmiosDataModule(LightningDataModule):
@@ -31,9 +54,10 @@ class OgmiosDataModule(LightningDataModule):
         self.num_workers = num_workers
         self.sort = True
 
-    def collate_fn(self, batch):
+    def collate_fn(self, batch: list[tuple[OgmiosSample, OgmiosGroundTruth]]) -> OgmiosBatch:
         x, y = zip(*batch)
         len_arr = np.array([d["phoneme"].shape[0] for d in x])
+        # TODO: document this line
         idxs = np.argsort(-len_arr).tolist()
 
         phonemes = [x[idx]["phoneme"] for idx in idxs]
@@ -66,7 +90,6 @@ class OgmiosDataModule(LightningDataModule):
         max_mel_len = torch.max(mel_lens).item()
         mel_mask = get_mask_from_lengths(mel_lens, max_mel_len)
 
-        # TODO: define typedict for this
         x = {"phoneme": phonemes,
              "phoneme_len": phoneme_lens,
              "phoneme_mask": phoneme_mask,
@@ -131,12 +154,25 @@ class OgmiosDataset(Dataset):
 
         self.files_idx, self.phonemes, self.raw_texts = zip(*self.load_metadata())
         # building a {phone -> index} mapping to convert phonemes to a sequence of numbers
-        self.phonemes_mapping = {ph : i for i, ph in enumerate(dataset_folder.phonemes)}
+        self.phonemes_mapping = {ph: i for i, ph in enumerate(dataset_folder.phonemes)}
+
+    def load_metadata(self):
+        with open(self.dataset_folder.preprocessed_folder / "metadata.csv", "r") as f:
+            csv_reader = csv.reader(f, delimiter="\t")
+            for row in csv_reader:
+                if row[0] not in self.split_idx:
+                    continue
+
+                phonemes = row[1].split("|")
+                if len(phonemes) > self.preprocess_config.text.max_length:
+                    continue
+
+                yield row[0], phonemes, row[2]
 
     def __len__(self):
         return len(self.files_idx)
 
-    def phonemes_to_sequence(self, phonemes: list[str]) -> np.ndarray[np.int32]:
+    def phonemes_to_sequence(self, phonemes: list[str]) -> NDArray[np.int32]:
         return np.array([self.phonemes_mapping[p] for p in phonemes])
 
     def __getitem__(self, idx):
@@ -157,16 +193,3 @@ class OgmiosDataset(Dataset):
         y = {"mel": mel}
 
         return x, y
-
-    def load_metadata(self):
-        with open(self.dataset_folder.preprocessed_folder / "metadata.csv", "r") as f:
-            csv_reader = csv.reader(f, delimiter="\t")
-            for row in csv_reader:
-                if row[0] not in self.split_idx:
-                    continue
-
-                phonemes = row[1].split("|")
-                if len(phonemes) > self.preprocess_config.text.max_length:
-                    continue
-
-                yield row[0], phonemes, row[2]

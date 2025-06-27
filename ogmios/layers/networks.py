@@ -39,12 +39,12 @@ class Encoder(nn.Module):
         self.embed = nn.Embedding(alphabet_dim + 1, embed_dim, padding_idx=0)
 
         self.attn_blocks = nn.ModuleList([])
-        for dim_in, dim_out, head, kernel, stride, padding in zip(dim_ins, self.dim_outs, \
+        for dim_in, dim_out, head, kernel, stride, padding in zip(dim_ins, self.dim_outs,
                                                                   heads, kernels, strides, paddings):
             self.attn_blocks.append(
                 nn.ModuleList([
                     # depthwise separable-like convolution
-                    nn.Conv1d(dim_in, dim_in, kernel_size=kernel, stride=stride, \
+                    nn.Conv1d(dim_in, dim_in, kernel_size=kernel, stride=stride,
                               padding=padding, bias=False),
                     nn.Conv1d(dim_in, dim_out, kernel_size=1, bias=False),
                     SelfAttention(dim_out, num_heads=head),

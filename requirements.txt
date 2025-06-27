@@ -22,7 +22,7 @@ pydantic
 pyworld
 # for audio playback
 sounddevice
-# sudo apt-get install portaudio19-dev
+# sudo apt-get inxstall portaudio19-dev
 typed-argument-parser
 phonemizer
 
