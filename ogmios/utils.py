@@ -7,7 +7,6 @@ Apache 2.0 License
 '''
 
 import argparse
-import json
 import logging
 import os
 import time
@@ -55,13 +54,6 @@ def get_mask_from_lengths(lengths, max_len=None):
     mask = ids >= lengths.unsqueeze(1).expand(-1, max_len)
 
     return mask
-
-
-def expand(values, durations):
-    out = list()
-    for value, d in zip(values, durations):
-        out += [value] * max(0, int(d))
-    return np.array(out)
 
 
 def synth_one_sample(mel_pred,
@@ -267,7 +259,6 @@ def get_args():
                         default="hifigan/LJ_V2/generator_v2",
                         type=str,
                         help="HiFiGAN checkpoint", )
-
 
     choices = ['cpu', 'cuda']
     parser.add_argument("--infer-device",

@@ -1,115 +1,100 @@
-'''
-EfficientSpeech: An On-Device Text to Speech Model
-https://ieeexplore.ieee.org/abstract/document/10094639
-Rowel Atienza
-Apache 2.0 License
-2023
-
-Usage:
-    Torch:
-    python3 demo.py --checkpoint tiny_eng_266k.ckpt --infer-device cuda  --text "In additive color mixing, which is used for displays such as computer screens and televisions, the primary colors are red, green, and blue."  --wav-filename color.wav
-
-    ONNX:
-    python3 demo.py --checkpoint tiny_eng_266k.onnx --infer-device cuda  --text "In additive color mixing, which is used for displays such as computer screens and televisions, the primary colors are red, green, and blue."  --wav-filename color.wav
-    
-Additional dependencies for GUI:
-    pip3 install pysimplegui
-    pip3 install sounddevice 
-'''
-
 import time
+from pathlib import Path
+from typing import Literal, TYPE_CHECKING
 
 import numpy as np
+from numpy.typing import NDArray
 import torch
-import validators
 import yaml
+from tap import Tap
 
+from ogmios.dataset.commons import PreprocessingConfig
+from ogmios.hifigan import HifiganOnnxModel
 from ogmios.trainer import EfficientSpeech, get_hifigan
-from ogmios.synthesize import get_lexicon_and_g2p, text2phoneme
-from ogmios.utils import get_args
+from ..utils import logger
 
 
-def tts(lexicon, g2p, preprocess_config, model: EfficientSpeech, hifigan, args, verbose=False):
-    text = args.phonemes.strip()
-    text = text.replace('-', ' ')
-    phoneme = np.array([text2phoneme(lexicon, g2p, text, preprocess_config, verbose=verbose)],
-                       dtype=np.int32)
+def get_player(sampling_rate: int):
+    import sounddevice as sd
+
+    sd.default.reset()
+    sd.default.samplerate = sampling_rate
+    sd.default.channels = 1
+    sd.default.dtype = 'int16'
+    sd.default.device = None
+    sd.default.latency = 'low'
+    return sd
+
+
+def phonemize(text: str, config: PreprocessingConfig) -> NDArray:
+    pass # TODO
+
+def synth(phonemes: NDArray[np.int32],
+          config: PreprocessingConfig,
+          model: EfficientSpeech,
+          hifigan: HifiganOnnxModel):
+
     start_time = time.time()
     with torch.no_grad():
-        phoneme = torch.from_numpy(phoneme).int().to(args.infer_device)
+        phoneme = torch.from_numpy(phonemes).int().to(model.device)
         mel, lengths = model.phoneme2mel.synthesize_one(phoneme)
-        mel = mel.transpose(1, 2)
-        wav = hifigan(mel).squeeze(1)
-        wav = wav.squeeze().cpu().numpy()
+        mel = mel.transpose(1, 2).cpu().numpy()
+        wav = hifigan.synth(mel).squeeze(1)
 
     elapsed_time = time.time() - start_time
-    message = f"Synthesis time: {elapsed_time:.2f} sec"
-    sampling_rate = preprocess_config["preprocessing"]["audio"]["sampling_rate"]
-    wav_len = wav.shape[0] / sampling_rate
-    message += f"\nVoice length: {wav_len:.2f} sec"
-    real_time_factor = wav_len / elapsed_time
-    message += f"\nReal time factor: {real_time_factor:.2f}"
-    message += f"\nNote:\tFor benchmarking, load the model 1st, do a warmup run for 100x, then run the benchmark for 1000 iterations."
-    message += f"\n\tGet the mean of 1000 runs. Use --iter N to run N iterations. eg N=100"
+    sampling_rate = config.sampling_rate
+    wav_duration = wav.shape[0] / sampling_rate
+    real_time_factor = wav_duration / elapsed_time
+    
+    logger.info(f"Synthesis time: {elapsed_time:.2f} sec")
+    logger.info(f"Voice length: {wav_duration:.2f} sec")
+    logger.info(f"Real time factor: {real_time_factor:.2f}")
 
-    print(message)
-    return wav, message, phoneme, wav_len, real_time_factor
+    return wav, phoneme, wav_duration, real_time_factor
 
+class DemoCheckPointCommandParser(Tap):
+    config: Path  # Path to processing config file (yaml)
+    checkpoint: Path  # Model checkpoint that is to be used for the demo
+    hifigan: Path  # Path to hifigan onnx model
+    text: str  # Text to phonemize
+    verbose: bool = False
+    play: bool = False
+    iter: int = 50
+    infer_device: Literal['gpu', 'cpu'] = 'gpu'  # Device for which to convert the model
 
 if __name__ == "__main__":
-    args = get_args()
-    preprocess_config = yaml.load(
-        open(args.config, "r"), Loader=yaml.FullLoader)
+    args = DemoCheckPointCommandParser().parse_args()
+    preprocess_config = yaml.load(open(args.config, "r"), Loader=yaml.FullLoader)
+    preprocessing_config = PreprocessingConfig(**preprocess_config["preprocessing"])
+    hifigan_onnx_model = HifiganOnnxModel(args.hifigan)
 
-    lexicon, g2p = get_lexicon_and_g2p(preprocess_config)
-    sampling_rate = preprocess_config["preprocessing"]["audio"]["sampling_rate"]
-    is_onnx = False
 
-    if validators.url(args.checkpoint):
-        checkpoint = args.checkpoint.rsplit('/', 1)[-1]
-        torch.hub.download_url_to_file(args.checkpoint, checkpoint)
-    else:
-        checkpoint = args.checkpoint
-
-    model = EfficientSpeech.load_from_checkpoint(checkpoint,
-                                                 infer_device=args.infer_device,
+    model = EfficientSpeech.load_from_checkpoint(checkpoint=args.checkpoint,
                                                  map_location=torch.device('cpu'))
 
     model = model.to(args.infer_device)
     model.eval()
 
-    hifigan = get_hifigan(checkpoint="hifigan/LJ_V2/generator_v2",
-                          infer_device=args.infer_device, verbose=args.verbose)
-
     if args.play:
-        import sounddevice as sd
+        sound_player = get_player(preprocess_config.sampling_rate)
 
-        sd.default.reset()
-        sd.default.samplerate = sampling_rate
-        sd.default.channels = 1
-        sd.default.dtype = 'int16'
-        sd.default.device = None
-        sd.default.latency = 'low'
+    phonemes = phonemize(args.text, preprocessing_config)
+    rtf = []
+    warmup = 10
+    for i in range(args.iter):
+        if args.infer_device == "cuda":
+            torch.cuda.synchronize()
+        wav, _, _, rtf_i = synth(phonemes, preprocess_config, model, hifigan_onnx_model)
+        if i > warmup:
+            rtf.append(rtf_i)
+        if args.infer_device == "cuda":
+            torch.cuda.synchronize()
 
-    if args.phonemes is not None:
-        rtf = []
-        warmup = 10
-        for i in range(args.iter):
-            if args.infer_device == "cuda":
-                torch.cuda.synchronize()
-            wav, _, _, _, rtf_i = tts(lexicon, g2p, preprocess_config, model, hifigan, args)
-            if i > warmup:
-                rtf.append(rtf_i)
-            if args.infer_device == "cuda":
-                torch.cuda.synchronize()
+        if args.play:
+            sound_player.play(wav)
+            sound_player.wait()
 
-            if args.play:
-                sd.play(wav)
-                sd.wait()
-
-        if len(rtf) > 0:
-            mean_rtf = np.mean(rtf)
-            # print with 2 decimal places
-            print("Average RTF: {:.2f}".format(mean_rtf))
-    else:
-        print("Nothing to synthesize. Please provide a text file with --text")
+    if len(rtf) > 0:
+        mean_rtf = np.mean(rtf)
+        # print with 2 decimal places
+        print("Average RTF: {:.2f}".format(mean_rtf))

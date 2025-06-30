@@ -1,19 +1,13 @@
-'''
-EfficientSpeech: An On-Device Text to Speech Model
-https://ieeexplore.ieee.org/abstract/document/10094639
-Rowel Atienza, 2023
-Apache 2.0 License
-
-Usage:
-    python3 convert.py --checkpoint tiny_eng_266k.ckpt --onnx tiny_eng_266k.onnx
-'''
+from pathlib import Path
+from typing import Literal, Optional
 
 import torch
 import yaml
+from tap import Tap
 
 from ogmios.layers import Phoneme2Mel
 from ogmios.trainer import EfficientSpeech, get_hifigan
-from ogmios.utils import get_args
+
 
 class OgmiosOnnx(torch.nn.Module):
     def __init__(self,
@@ -27,16 +21,23 @@ class OgmiosOnnx(torch.nn.Module):
         mel = mel.transpose(1, 2)
         return mel
 
+
+class ConvertOnnxCommandParser(Tap):
+    config: Path  # Path to processing config file (yaml)
+    checkpoint: Path  # Model checkpoint that is to be converted to onnx
+    verbose: bool = False
+
+    infer_device: Literal['gpu', 'cpu'] = 'cpu'  # Device for which to convert the model
+    output_path: Optional[Path] = None
+
+
 # main routine
 if __name__ == "__main__":
-    args = get_args()
-    preprocess_config = yaml.load(
-        open(args.config, "r"), Loader=yaml.FullLoader)
+    args = ConvertOnnxCommandParser.parse_args()
+    preprocess_config = yaml.load(open(args.config, "r"), Loader=yaml.FullLoader)
 
-    model = EfficientSpeech.load_from_checkpoint(args.checkpoint, map_location=torch.device('cpu'))
+    model = EfficientSpeech.load_from_checkpoint(args.checkpoint, map_location=torch.device(args.infer_device))
     model = model.to(args.infer_device)
-    # hifigan = get_hifigan(checkpoint="hifigan/LJ_V2/generator_v2",
-    #                       infer_device=args.infer_device, verbose=args.verbose)
 
     ogmios_model = OgmiosOnnx(phon2mel=model.phoneme2mel)
 
@@ -45,8 +46,11 @@ if __name__ == "__main__":
     sample_input = [phoneme]
     print("Converting to ONNX ...", args.onnx)
 
+    if args.output_path is None:
+        output_path = Path("ogmios_onnx.onnx")
+
     torch.onnx.export(ogmios_model,
-                      f="ogmios_onnx.onnx",
+                      f=output_path,
                       args=tuple(sample_input),
                       opset_version=args.onnx_opset,
                       input_names=["x"],

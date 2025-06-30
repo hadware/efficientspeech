@@ -1,4 +1,3 @@
-
 import torch
 import torch.nn.functional as F
 from einops import reduce, repeat
@@ -7,9 +6,9 @@ from torch import nn
 
 class MixFFN(nn.Module):
     def __init__(
-        self,
-        dim,
-        expansion_factor,
+            self,
+            dim: int,
+            expansion_factor: int,
     ):
         super().__init__()
         hidden_dim = dim * expansion_factor
@@ -17,7 +16,6 @@ class MixFFN(nn.Module):
         self.conv = nn.Conv1d(hidden_dim, hidden_dim, 3, padding=1)
         self.mlp2 = nn.Linear(hidden_dim, dim)
         self.act = nn.GELU()
-        
 
     def forward(self, x):
         x = self.mlp1(x)
@@ -29,8 +27,9 @@ class MixFFN(nn.Module):
         return x
 
 
+# TODO: replace with vanilla self att from pytorch
 class SelfAttention(nn.Module):
-    def __init__(self, dim, num_heads=1, qkv_bias=False):
+    def __init__(self, dim: int, num_heads: int = 1, qkv_bias: bool = False):
         super().__init__()
         assert dim % num_heads == 0, 'dim should be divisible by num_heads'
         self.num_heads = num_heads
@@ -44,7 +43,7 @@ class SelfAttention(nn.Module):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C).permute(2, 0, 3, 1, 4)
         # qkv dim is [3, B, num_heads, N, C]
-        q, k, v = qkv.unbind(0)   # make torchscript happy (cannot use tensor as tuple)
+        q, k, v = qkv.unbind(0)  # make torchscript happy (cannot use tensor as tuple)
 
         attn = (q @ k.transpose(-2, -1)) * self.scale
         attn_mask = None
@@ -52,19 +51,19 @@ class SelfAttention(nn.Module):
             if pool > 1:
                 mod = mask.shape[-1] % pool
                 if mod > 0:
-                    pad = [0, int(pool-mod)]
+                    pad = [0, int(pool - mod)]
                     mask = F.pad(mask, pad, value=True)
                 mask = reduce(mask, 'b (n p) -> b n', 'max', p=pool)
 
             attn_mask = mask.unsqueeze(1).expand(-1, attn.shape[-1], -1)
-            attn_mask = attn_mask.repeat(self.num_heads, 1, 1) 
+            attn_mask = attn_mask.repeat(self.num_heads, 1, 1)
             attn_mask = attn_mask.reshape(-1, self.num_heads, attn_mask.shape[-2], attn_mask.shape[-1])
 
         attn = attn.softmax(dim=-1)
 
         x = (attn @ v).transpose(1, 2).reshape(B, N, -1)
         x = self.proj(x)
-        
+
         if mask is not None:
             attn_mask = repeat(mask, 'b n -> b n a', a=x.shape[-1])
 

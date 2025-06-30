@@ -16,6 +16,7 @@ from lightning import LightningModule
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 
+from ogmios.datamodule import OgmiosBatch
 from ogmios.dataset.commons import DatasetFolder, PreprocessingConfig
 from ogmios.hifigan import HifiganOnnxModel
 from ogmios.layers import PhonemeEncoder, MelDecoder, Phoneme2Mel
@@ -154,7 +155,7 @@ class EfficientSpeech(LightningModule):
 
         return mel_loss, pitch_loss, energy_loss, duration_loss
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch: OgmiosBatch, batch_idx: int):
         x, y = batch
         y_hat = self.forward(x)
 
@@ -212,7 +213,7 @@ class EfficientSpeech(LightningModule):
 
             # then logging resynthesis of ground truth mel (through hifigan)
             with torch.no_grad():
-                mel_gt = mels_gt[i, :mel_lens_gt[i], :].cpu().numpy().transpose(1,0)
+                mel_gt = mels_gt[i, :mel_lens_gt[i], :].cpu().numpy().transpose(1, 0)
                 wav_gt = self.hifigan.synth(mel_gt)
 
                 self.logger.experiment.add_audio(

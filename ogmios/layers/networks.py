@@ -11,6 +11,7 @@ import torch
 from torch import nn
 
 from .blocks import MixFFN, SelfAttention
+from ..datamodule import OgmiosBatch
 
 
 class Encoder(nn.Module):
@@ -39,8 +40,8 @@ class Encoder(nn.Module):
         self.embed = nn.Embedding(alphabet_dim + 1, embed_dim, padding_idx=0)
 
         self.attn_blocks = nn.ModuleList([])
-        for dim_in, dim_out, head, kernel, stride, padding in zip(dim_ins, self.dim_outs,
-                                                                  heads, kernels, strides, paddings):
+        for dim_in, dim_out, head, kernel, stride, padding in zip(dim_ins, self.dim_outs, heads,
+                                                                  kernels, strides, paddings):
             self.attn_blocks.append(
                 nn.ModuleList([
                     # depthwise separable-like convolution
@@ -98,6 +99,8 @@ class Encoder(nn.Module):
 
 class AcousticDecoder(nn.Module):
     """ Pitch, Duration, Energy Predictor """
+    bins: Optional[nn.Parameter]
+    acoustic_embedding: Optional[nn.Embedding]
 
     def __init__(self, dim: int,
                  acoustic_stats=None,
@@ -121,6 +124,9 @@ class AcousticDecoder(nn.Module):
         else:
             self.bins = None
             self.acoustic_embedding = None
+
+    def set_acoustic_stats(self, acoustic_stats):
+        pass
 
     @staticmethod
     def gaussian_bins(mean: float, std: float, num_bins: int):
@@ -338,7 +344,8 @@ class PhonemeEncoder(nn.Module):
         self.energy_decoder = AcousticDecoder(dim, acoustic_stats=energy_stats)
         self.duration_decoder = AcousticDecoder(dim, duration=True)
 
-    def forward(self, x, train=False):
+    # TODO: make this function train-only
+    def forward(self, x: OgmiosBatch, train=False):
         phoneme = x["phoneme"]
         phoneme_mask = x["phoneme_mask"] if phoneme.shape[0] > 1 else None
 

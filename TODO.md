@@ -1,0 +1,6 @@
+- Add support for finetuning
+- Notes on finetuning
+  - Need for checkpoint retraining
+  - Pretrain dataset and finetuning dataset will have different mean/std for energy/pitch
+  - This needs to be updated in the Acoustic Decoders
+  - If the 
