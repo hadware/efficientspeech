@@ -6,7 +6,7 @@ import yaml
 from tap import Tap
 
 from ogmios.layers import Phoneme2Mel
-from ogmios.trainer import EfficientSpeech, get_hifigan
+from ogmios.trainer import EfficientSpeech
 
 
 class OgmiosOnnx(torch.nn.Module):
@@ -30,6 +30,23 @@ class ConvertOnnxCommandParser(Tap):
     infer_device: Literal['gpu', 'cpu'] = 'cpu'  # Device for which to convert the model
     output_path: Optional[Path] = None
 
+# TODO: add phonemes from dataset to model metada
+# import onnx
+# from onnx import helper
+#
+# # Supposons que votre modèle soit déjà créé
+# model = ... # Votre modèle ONNX
+#
+# # Pour ajouter une liste de chaînes comme métadonnées
+# phones = ["a", "b", "c", "d", "e"] # Votre liste de phonèmes
+# string_list = helper.StringStringEntryProto(key="phones", value=",".join(phones))
+# metadata_props = [string_list]
+#
+# # Ajouter les métadonnées au modèle
+# model.metadata_props.extend(metadata_props)
+#
+# # Sauvegarder le modèle
+# onnx.save(model, "model_with_metadata.onnx")
 
 # main routine
 if __name__ == "__main__":
