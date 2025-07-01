@@ -229,12 +229,6 @@ class EfficientSpeech(LightningModule):
                     dataformats="HWC"
                 )
 
-    def on_test_epoch_end(self):
-        pass
-
-    def on_validation_epoch_end(self):
-        pass
-
     def configure_optimizers(self):
         optimizer = AdamW(self.parameters(), lr=self.hparams.lr, weight_decay=self.hparams.weight_decay)
         self.scheduler = get_lr_scheduler(optimizer, 50, self.hparams.max_epochs, min_lr=0)
