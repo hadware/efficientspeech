@@ -12,7 +12,7 @@ from ogmios.dataset.commons import PreprocessingConfig, DatasetFolder
 
 PhonemizeFn = Callable[[str], list[str]]
 
-class Phonemizer:
+class OgmiosPhonemizer:
     # TODO: DOCUMENT
     def __init__(self, lang: str,
                  phones: list[str],

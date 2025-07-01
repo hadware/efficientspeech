@@ -1,54 +1,52 @@
-import numpy as np
 import onnx
 import onnxruntime
 import torch
 import yaml
 
-from ogmios.trainer import get_hifigan
-from ogmios.synthesize import get_lexicon_and_g2p, text2phoneme
-from ogmios.utils import get_args
+from ogmios.dataset.commons import PreprocessingConfig
+from ogmios.hifigan import HifiganOnnxModel
+from ogmios.phonemizer import OgmiosPhonemizer
+from ogmios.utils import get_player
 
 ONNX_CPU_PROVIDERS = [
     "CPUExecutionProvider",
 ]
 
-if __name__ == '__main__':
-    args = get_args()
-    preprocess_config = yaml.load(
-        open(args.config, "r"), Loader=yaml.FullLoader)
+class DemoOnnxCommandParser(Tap):
+    onnx: Path  # Onnx model checkpoint that is to be used for the demo
+    hifigan: Path  # Path to hifigan onnx model
+    text: str  # Text to phonemize
+    verbose: bool = False
+    play: bool = False
 
-    lexicon, g2p = get_lexicon_and_g2p(preprocess_config)
-    sampling_rate = preprocess_config["preprocessing"]["audio"]["sampling_rate"]
+
+if __name__ == '__main__':
+    args = DemoOnnxCommandParser.parse_args()
+    config = yaml.load( open(args.config, "r"), Loader=yaml.FullLoader)
+    preprocessing_config = PreprocessingConfig(**config["preprocessing"])
 
     # preparing ONNX model
     onnx_model = onnx.load(args.checkpoint)
     onnx.checker.check_model(args.checkpoint, full_check=True)
     onnx_session = onnxruntime.InferenceSession(args.checkpoint, providers=ONNX_CPU_PROVIDERS)
 
+    # loading hifigan onnx model
+    hifigan_onnx_model = HifiganOnnxModel(args.hifigan)
+
     # preparing text input
-    text = args.phonemes.strip()
-    text = text.replace('-', ' ')
-    phoneme = np.array(text2phoneme(lexicon, g2p, text, preprocess_config, verbose=args.verbose),
-                       dtype=np.int32)
-    inputs = {onnx_session.get_inputs()[0].name: phoneme}
+    phonemizer = OgmiosPhonemizer.from_onnx_model(onnx_model)
+    phonemes = phonemizer(args.text)
+    inputs = {onnx_session.get_inputs()[0].name: phonemes}
     outputs = onnx_session.run(None, inputs)
 
     # vocoding
-    hifigan = get_hifigan(checkpoint="hifigan/LJ_V2/generator_v2",
-                          infer_device=args.infer_device, verbose=args.verbose)
-    mel = torch.tensor(outputs[0])
-    wav = hifigan(mel).squeeze(1)
-    wav = wav.squeeze().cpu().numpy()
+    hifigan = HifiganOnnxModel(args.hifigan)
+    mel = torch.tensor(outputs[0]).cpu().numpy()
+    wav = hifigan.synth(mel).squeeze(1)
+    wav = wav.squeeze()
 
     if args.play:
-        import sounddevice as sd
+        player = get_player(config.sampling_rate)
 
-        sd.default.reset()
-        sd.default.samplerate = sampling_rate
-        sd.default.channels = 1
-        sd.default.dtype = 'int16'
-        sd.default.device = None
-        sd.default.latency = 'low'
-
-        sd.play(wav)
-        sd.wait()
+        player.play(wav)
+        player.wait()

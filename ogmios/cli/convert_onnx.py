@@ -30,7 +30,7 @@ class ConvertOnnxCommandParser(Tap):
     infer_device: Literal['gpu', 'cpu'] = 'cpu'  # Device for which to convert the model
     output_path: Optional[Path] = None
 
-# TODO: add phonemes from dataset to model metada
+# TODO: add phonemes from dataset to model metadata
 # import onnx
 # from onnx import helper
 #
