@@ -1,6 +1,6 @@
 from typing import Iterable
 
-from pydantic import BaseModel, validator, field_validator
+from pydantic import BaseModel
 
 
 class Interval(BaseModel):

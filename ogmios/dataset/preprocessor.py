@@ -11,6 +11,8 @@ import torch
 from scipy.interpolate import interp1d
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from tqdm import tqdm
+from torch.nn import functional as F
+from torchaudio.transforms import MelSpectrogram
 
 from .aligments import AlignmentFile, Interval
 from .commons import DatasetFolder, PreprocessingConfig, AcousticStats
@@ -21,6 +23,20 @@ from ..utils import logger
 class ProcessingError(Exception):
     pass
 
+class LogMelSpectrogram(MelSpectrogram):
+    # Adapted from hifigan's logmel pre-processing code
+
+    def forward(self, wav: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        assert torch.min(wav) >= -1
+        assert torch.max(wav) <= 1
+        wav = F.pad(wav, ((1024 - 160) // 2, (1024 - 160) // 2), "reflect")
+        spectrogram = self.spectrogram(wav)
+        mel = self.mel_scale(spectrogram)
+        logmel = torch.log(torch.clamp(mel, min=1e-5))
+        energy = torch.norm(mel, dim=1)
+        return logmel, energy
+
+
 
 class DatasetPreprocessor:
     def __init__(self, config: PreprocessingConfig, dataset: DatasetFolder):
@@ -30,14 +46,19 @@ class DatasetPreprocessor:
         assert config.pitch.feature_level in ["phoneme", "frame"]
         assert config.energy.feature_level in ["phoneme", "frame"]
 
-        self.STFT = TacotronSTFT(
-            filter_length=config.stft.filter_length,
+        self.logmel_spectrogram = LogMelSpectrogram(
+            sample_rate=config.sampling_rate,
+            n_fft=config.stft.filter_length,
             hop_length=config.stft.hop_length,
             win_length=config.stft.win_length,
-            n_mel_channels=config.mel.n_mel_channels,
-            sampling_rate=config.sampling_rate,
-            mel_fmin=config.mel.mel_fmin,
-            mel_fmax=config.mel.mel_fmax,
+            n_mels=config.mel.n_mel_channels,
+            f_min=config.mel.mel_fmin,
+            f_max=config.mel.mel_fmax,
+            center=False,
+            power=1.0,
+            norm="slaney",
+            onesided=True,
+            mel_scale="slaney",
         )
 
     def remove_trailing_silences(self, phones : list[Interval]):
@@ -116,7 +137,7 @@ class DatasetPreprocessor:
 
         with torch.no_grad():
             audio = torch.clip(torch.FloatTensor(wav).unsqueeze(0), -1, 1)
-            mel, energy = self.STFT.mel_spectrogram(audio)
+            mel, energy = self.logmel_spectrogram.mel_spectrogram(audio)
             mel = torch.squeeze(mel, 0).numpy().astype(np.float32)
             energy = torch.squeeze(energy, 0).numpy().astype(np.float32)
 

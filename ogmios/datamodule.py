@@ -8,9 +8,9 @@ import csv
 from typing import Literal, TypedDict
 
 import numpy as np
-from numpy.typing import NDArray
 import torch
 from lightning import LightningDataModule
+from numpy.typing import NDArray
 from torch.utils.data import Dataset, DataLoader
 
 from ogmios.dataset.commons import PreprocessingConfig, DatasetFolder
