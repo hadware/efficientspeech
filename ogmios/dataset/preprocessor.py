@@ -10,13 +10,12 @@ import pyworld as pw
 import torch
 from scipy.interpolate import interp1d
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from tqdm import tqdm
 from torch.nn import functional as F
 from torchaudio.transforms import MelSpectrogram
+from tqdm import tqdm
 
 from .aligments import AlignmentFile, Interval
 from .commons import DatasetFolder, PreprocessingConfig, AcousticStats
-from ..audio.stft import TacotronSTFT
 from ..utils import logger
 
 
