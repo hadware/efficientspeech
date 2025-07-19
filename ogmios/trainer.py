@@ -52,6 +52,7 @@ def get_lr_scheduler(optimizer, warmup_steps, total_steps, min_lr=0):
 
 
 class EfficientSpeech(LightningModule):
+    # TODO: pass model pre-loaded
     def __init__(self,
                  dataset_folder: DatasetFolder,
                  preprocess_config: PreprocessingConfig,

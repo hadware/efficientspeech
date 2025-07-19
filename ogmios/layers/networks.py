@@ -12,6 +12,7 @@ from torch import nn
 
 from .blocks import MixFFN, SelfAttention
 from ..datamodule import OgmiosBatch
+from ..dataset.commons import AcousticStats
 
 
 class Encoder(nn.Module):
@@ -102,8 +103,9 @@ class AcousticDecoder(nn.Module):
     bins: Optional[nn.Parameter]
     acoustic_embedding: Optional[nn.Embedding]
 
-    def __init__(self, dim: int,
-                 acoustic_stats=None,
+    def __init__(self,
+                 dim: int,
+                 acoustic_stats: Optional[AcousticStats] = None,
                  n_mel_channels: int = 80,
                  duration=False):
         super().__init__()
@@ -126,7 +128,7 @@ class AcousticDecoder(nn.Module):
             self.acoustic_embedding = None
 
     def set_acoustic_stats(self, acoustic_stats):
-        pass # TODO
+        pass  # TODO
 
     @staticmethod
     def gaussian_bins(mean: float, std: float, num_bins: int):
