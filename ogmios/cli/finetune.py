@@ -36,6 +36,7 @@ def print_args(args):
 
 class FineTuneCommandParser(Tap):
     config: Path  # Path to processing config file (yaml)
+    checkpoint: Path # Path to model checkpoint
     verbose: bool = False
 
     accelerator: Literal['gpu', 'cpu'] = 'gpu'
@@ -72,26 +73,17 @@ if __name__ == "__main__":
                                   batch_size=args.batch_size,
                                   num_workers=args.num_workers)
 
-    model = EfficientSpeech(dataset_folder=dataset_folder,
-                            preprocess_config=preprocessing_config,
-                            lr=args.lr,
-                            weight_decay=args.weight_decay,
-                            max_epochs=args.max_epochs,
-                            depth=args.depth,
-                            n_blocks=args.n_blocks,
-                            block_depth=args.block_depth,
-                            reduction=args.reduction,
-                            head=args.head,
-                            embed_dim=args.embed_dim,
-                            kernel_size=args.kernel_size,
-                            decoder_kernel_size=args.decoder_kernel_size,
-                            expansion=args.expansion,
-                            hifigan_onnx_path=args.hifigan_onnx_path)
+    model = EfficientSpeech.load_from_checkpoint(checkpoint_path=args.checkpoint,
+                                                 map_location=args.accelerator)
+    model.lr = args.lr
+    model.weight_decay = args.weight_decay
+    model.max_epochs = args.max_epochs
+
 
     if args.verbose:
         print_args(args)
 
-    tb_logger = TensorBoardLogger("tb_logs", name="ogmios")
+    tb_logger = TensorBoardLogger("tb_logs", name=f"ogmios_ft_{dataset_folder.name}")
 
     trainer = Trainer(accelerator=args.accelerator,
                       devices=args.devices,

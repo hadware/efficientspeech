@@ -21,6 +21,8 @@ from tap import Tap
 
 from ogmios.datamodule import OgmiosDataModule
 from ogmios.dataset.commons import PreprocessingConfig, DatasetFolder
+from ogmios.hifigan import HifiganOnnxModel
+from ogmios.layers import PhonemeEncoder, MelDecoder, Phoneme2Mel
 from ogmios.trainer import EfficientSpeech
 
 
@@ -70,37 +72,48 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
 
     config = yaml.load(open(args.config, "r"), Loader=yaml.FullLoader)
-    preprocessing_config = PreprocessingConfig(**config["preprocessing"])
+    preprocess_cfg = PreprocessingConfig(**config["preprocessing"])
     dataset_folder = DatasetFolder(root_path=Path(config["dataset"]["root_path"]),
                                    ds_name=config["dataset"].get("name"))
     args.num_workers *= args.devices
     torch.set_float32_matmul_precision('high')
 
     datamodule = OgmiosDataModule(dataset_folder=dataset_folder,
-                                  preprocess_config=preprocessing_config,
+                                  preprocess_config=preprocess_cfg,
                                   batch_size=args.batch_size,
                                   num_workers=args.num_workers)
 
-    model = EfficientSpeech(dataset_folder=dataset_folder,
-                            preprocess_config=preprocessing_config,
-                            lr=args.lr,
-                            weight_decay=args.weight_decay,
-                            max_epochs=args.max_epochs,
-                            depth=args.depth,
-                            n_blocks=args.n_blocks,
-                            block_depth=args.block_depth,
-                            reduction=args.reduction,
-                            head=args.head,
-                            embed_dim=args.embed_dim,
-                            kernel_size=args.kernel_size,
-                            decoder_kernel_size=args.decoder_kernel_size,
-                            expansion=args.expansion,
-                            hifigan_onnx_path=args.hifigan_onnx_path)
+    phoneme_encoder = PhonemeEncoder(alphabet_dim=len(dataset_folder.phonemes),
+                                     pitch_stats=dataset_folder.stats["pitch"],
+                                     energy_stats=dataset_folder.stats["energy"],
+                                     depth=args.depth,
+                                     reduction=args.reduction,
+                                     head=args.head,
+                                     embed_dim=args.embed_dim,
+                                     kernel_size=args.kernel_size,
+                                     expansion=args.expansion)
+
+    mel_decoder = MelDecoder(dim=args.embed_dim // args.reduction,
+                             n_mel_channels=preprocess_cfg.mel.n_mel_channels,
+                             kernel_size=args.decoder_kernel_size,
+                             n_blocks=args.n_blocks,
+                             block_depth=args.block_depth)
+
+    phoneme2mel = Phoneme2Mel(encoder=phoneme_encoder,
+                              decoder=mel_decoder)
+
+    hifigan_onnx = HifiganOnnxModel(args.hifigan_onnx_path)
+    pl_model = EfficientSpeech(hifigan_onnx=hifigan_onnx,
+                               preprocess_config=preprocess_cfg,
+                               phoneme2mel=phoneme2mel,
+                               lr=args.lr,
+                               weight_decay=args.weight_decay,
+                               max_epochs=args.max_epochs )
 
     if args.verbose:
         print_args(args)
 
-    tb_logger = TensorBoardLogger("tb_logs", name="ogmios")
+    tb_logger = TensorBoardLogger("tb_logs", name=f"ogmios_{dataset_folder.name}")
 
     trainer = Trainer(accelerator=args.accelerator,
                       devices=args.devices,
@@ -110,6 +123,6 @@ if __name__ == "__main__":
                       logger=tb_logger)
 
     start_time = datetime.datetime.now()
-    trainer.fit(model, datamodule=datamodule)
+    trainer.fit(pl_model, datamodule=datamodule)
     elapsed_time = datetime.datetime.now() - start_time
     print(f"Training time: {elapsed_time}")

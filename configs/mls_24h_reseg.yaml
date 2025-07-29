@@ -6,16 +6,16 @@ preprocessing:
   sampling_rate: 22050
 
   text:
-    language: "en"
+    language: "fr"
     max_length: 4096
   stft:
     filter_length: 1024
     hop_length: 256
     win_length: 1024
   mel:
-    n_mel_channels: 80
+    n_mel_channels: 128
     mel_fmin: 0
-    mel_fmax: 8000 # please set to 8000 for HiFi-GAN vocoder, set to null for MelGAN vocoder
+    mel_fmax: 8000 #set to 8000 for HiFi-GAN vocoder, set to null for MelGAN vocoder
   pitch:
     feature_level: "phoneme" # support 'phoneme' or 'frame'
     normalization: False

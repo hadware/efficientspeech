@@ -136,7 +136,7 @@ class DatasetPreprocessor:
 
         with torch.no_grad():
             audio = torch.clip(torch.FloatTensor(wav).unsqueeze(0), -1, 1)
-            mel, energy = self.logmel_spectrogram.mel_spectrogram(audio)
+            mel, energy = self.logmel_spectrogram(audio)
             mel = torch.squeeze(mel, 0).numpy().astype(np.float32)
             energy = torch.squeeze(energy, 0).numpy().astype(np.float32)
 
@@ -167,6 +167,9 @@ class DatasetPreprocessor:
         pitch = self.compute_pitch(wav, durations)
         mel, energy = self.compute_mel_and_energy(wav, durations)
         mel = mel.T
+
+        # TODO: fix the error that triggers this assert
+        assert mel.shape[0] == total_duration
 
         np.save(self.dataset.durations_folder / f"{wav_path.stem}.npy", durations)
         np.save(self.dataset.pitches_folder / f"{wav_path.stem}.npy", pitch)
@@ -219,9 +222,6 @@ class DatasetPreprocessor:
                 n_frames += total_frames
 
         logger.info(f"Total duration: {n_frames * self.config.stft.hop_length / self.config.sampling_rate / 3600}")
-        # TODO: investigate into the normalisation thing.
-        #   Norm should bring std and mean to 1 and 0.
-        #  It seems that there is a mismatch between the data and the stats
 
         # Store pitch stats then optionally normalize
         pitch_stats = AcousticStats(

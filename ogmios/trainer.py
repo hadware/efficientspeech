@@ -7,7 +7,6 @@ Apache 2.0 License
 '''
 
 import math
-from pathlib import Path
 
 import numpy as np
 import torch
@@ -17,9 +16,9 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 
 from ogmios.datamodule import OgmiosBatch
-from ogmios.dataset.commons import DatasetFolder, PreprocessingConfig
+from ogmios.dataset.commons import PreprocessingConfig
 from ogmios.hifigan import HifiganOnnxModel
-from ogmios.layers import PhonemeEncoder, MelDecoder, Phoneme2Mel
+from ogmios.layers import Phoneme2Mel
 from ogmios.utils import plot_spectrogram_to_numpy
 
 
@@ -52,47 +51,21 @@ def get_lr_scheduler(optimizer, warmup_steps, total_steps, min_lr=0):
 
 
 class EfficientSpeech(LightningModule):
-    # TODO: pass model pre-loaded
     def __init__(self,
-                 dataset_folder: DatasetFolder,
                  preprocess_config: PreprocessingConfig,
+                 hifigan_onnx: HifiganOnnxModel,
+                 phoneme2mel: Phoneme2Mel,
                  lr: float = 1e-3,
                  weight_decay: float = 1e-6,
-                 max_epochs: int = 5000,
-                 depth: int = 2,
-                 n_blocks: int = 2,
-                 block_depth: int = 2,
-                 reduction: int = 4,
-                 head: int = 1,
-                 embed_dim: int = 128,
-                 kernel_size: int = 3,
-                 decoder_kernel_size: int = 3,
-                 expansion: int = 1,
-                 hifigan_onnx_path: Path = None):
+                 max_epochs: int = 5000
+                 ):
         super().__init__()
-
-        self.save_hyperparameters()
-
-        phoneme_encoder = PhonemeEncoder(alphabet_dim=len(dataset_folder.phonemes),
-                                         pitch_stats=dataset_folder.stats["pitch"],
-                                         energy_stats=dataset_folder.stats["energy"],
-                                         depth=depth,
-                                         reduction=reduction,
-                                         head=head,
-                                         embed_dim=embed_dim,
-                                         kernel_size=kernel_size,
-                                         expansion=expansion)
-
-        mel_decoder = MelDecoder(dim=embed_dim // reduction,
-                                 n_mel_channels=preprocess_config.mel.n_mel_channels,
-                                 kernel_size=decoder_kernel_size,
-                                 n_blocks=n_blocks,
-                                 block_depth=block_depth)
-
-        self.phoneme2mel = Phoneme2Mel(encoder=phoneme_encoder,
-                                       decoder=mel_decoder)
-
-        self.hifigan = HifiganOnnxModel(hifigan_onnx_path)
+        self.preprocess_config = preprocess_config
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.max_epochs = max_epochs
+        self.phoneme2mel = phoneme2mel
+        self.hifigan = hifigan_onnx
 
         self.training_step_outputs = []
 
@@ -163,33 +136,18 @@ class EfficientSpeech(LightningModule):
         mel_loss, pitch_loss, energy_loss, duration_loss = self.loss(y_hat, y, x)
         loss = (10. * mel_loss) + (2. * pitch_loss) + (2. * energy_loss) + duration_loss
 
-        losses = {"loss": loss,
-                  "mel_loss": mel_loss,
-                  "pitch_loss": pitch_loss,
-                  "energy_loss": energy_loss,
-                  "duration_loss": duration_loss}
-        self.training_step_outputs.append(losses)
-
+        self.log("mel_loss", mel_loss, on_step=False, on_epoch=True)
+        self.log("pitch_loss", pitch_loss, on_step=False, on_epoch=True)
+        self.log("energy_loss", energy_loss, on_step=False, on_epoch=True)
+        self.log("dur_loss", duration_loss, on_step=False, on_epoch=True)
+        self.log("loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         return loss
 
     def on_train_epoch_end(self):
-        avg_loss = torch.stack([x["loss"] for x in self.training_step_outputs]).mean()
-        avg_mel_loss = torch.stack([x["mel_loss"] for x in self.training_step_outputs]).mean()
-        avg_pitch_loss = torch.stack([x["pitch_loss"] for x in self.training_step_outputs]).mean()
-        avg_energy_loss = torch.stack(
-            [x["energy_loss"] for x in self.training_step_outputs]).mean()
-        avg_duration_loss = torch.stack(
-            [x["duration_loss"] for x in self.training_step_outputs]).mean()
-        self.log("mel", avg_mel_loss, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("pitch", avg_pitch_loss, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("energy", avg_energy_loss, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("dur", avg_duration_loss, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("loss", avg_loss, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("lr", self.scheduler.get_last_lr()[0], on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("lr", self.scheduler.get_last_lr()[0], on_epoch=True, prog_bar=True)
         self.training_step_outputs.clear()
 
     def validation_step(self, batch, batch_idx):
-
         if batch_idx != 0 or self.current_epoch < 1:
             return
 
@@ -231,7 +189,7 @@ class EfficientSpeech(LightningModule):
                 )
 
     def configure_optimizers(self):
-        optimizer = AdamW(self.parameters(), lr=self.hparams.lr, weight_decay=self.hparams.weight_decay)
-        self.scheduler = get_lr_scheduler(optimizer, 50, self.hparams.max_epochs, min_lr=0)
+        optimizer = AdamW(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        self.scheduler = get_lr_scheduler(optimizer, 50, self.max_epochs, min_lr=0)
 
         return [optimizer], [self.scheduler]

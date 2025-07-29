@@ -99,36 +99,30 @@ class Encoder(nn.Module):
 
 
 class AcousticDecoder(nn.Module):
-    """ Pitch, Duration, Energy Predictor """
+    """ Pitch & Energy Predictor.
+    Also embeds acoustic values, using a square matrix embedding
+    (meaning that we have n embedding bins each corresponding to a n-dimensional learned embedding vector)"""
     bins: Optional[nn.Parameter]
     acoustic_embedding: Optional[nn.Embedding]
 
     def __init__(self,
                  dim: int,
-                 acoustic_stats: Optional[AcousticStats] = None,
-                 n_mel_channels: int = 80,
-                 duration=False):
+                 acoustic_stats: Optional[AcousticStats] = None):
         super().__init__()
-
-        self.n_mel_channels = n_mel_channels
-
         self.conv1 = nn.Sequential(nn.Conv1d(dim, dim, kernel_size=3, padding=1), nn.ReLU())
         self.norm1 = nn.LayerNorm(dim)
         self.conv2 = nn.Sequential(nn.Conv1d(dim, dim, kernel_size=3, padding=1), nn.ReLU())
-        self.norm2 = nn.LayerNorm(dim)
         self.linear = nn.Linear(dim, 1)
-        self.duration = duration
+        self.set_acoustic_stats(acoustic_stats, dim)
 
-        if acoustic_stats is not None:
-            gaussian_bins = self.gaussian_bins(acoustic_stats["mean"], acoustic_stats["std"], dim)
-            self.bins = nn.Parameter(gaussian_bins, requires_grad=False, )
-            self.acoustic_embedding = nn.Embedding(dim, dim)
-        else:
-            self.bins = None
-            self.acoustic_embedding = None
+    @property
+    def dim(self):
+        return self.bins.shape[0]
 
-    def set_acoustic_stats(self, acoustic_stats):
-        pass  # TODO
+    def set_acoustic_stats(self, acoustic_stats: AcousticStats, dim: int):
+        gaussian_bins = self.gaussian_bins(acoustic_stats["mean"], acoustic_stats["std"], dim)
+        self.bins = nn.Parameter(gaussian_bins, requires_grad=False, )
+        self.acoustic_embedding = nn.Embedding(dim, dim)
 
     @staticmethod
     def gaussian_bins(mean: float, std: float, num_bins: int):
@@ -147,21 +141,46 @@ class AcousticDecoder(nn.Module):
             # pred = pred * control
             return self.acoustic_embedding(torch.bucketize(pred, self.bins))
 
-    def forward(self, fused_features):
+    def forward(self, fused_features: torch.Tensor):
         y = fused_features.permute(0, 2, 1)
         y = self.conv1(y)
         y = y.permute(0, 2, 1)
-        y = nn.ReLU()(self.norm1(y))
+        y = torch.relu(self.norm1(y))
+        y = y.permute(0, 2, 1)
+        y = self.conv2(y)
+        y = y.permute(0, 2, 1)
+        y = self.linear(y)
+        return y
+
+
+class DurationDecoder(nn.Module):
+    """ Duration Predictor """
+
+    def __init__(self,
+                 dim: int,
+                 n_mel_channels: int = 80):
+        super().__init__()
+
+        self.n_mel_channels = n_mel_channels
+
+        self.conv1 = nn.Sequential(nn.Conv1d(dim, dim, kernel_size=3, padding=1), nn.ReLU())
+        self.norm1 = nn.LayerNorm(dim)
+        self.conv2 = nn.Sequential(nn.Conv1d(dim, dim, kernel_size=3, padding=1), nn.ReLU())
+        self.norm2 = nn.LayerNorm(dim)
+        self.linear = nn.Linear(dim, 1)
+
+    def forward(self, fused_features: torch.Tensor):
+        y = fused_features.permute(0, 2, 1)
+        y = self.conv1(y)
+        y = y.permute(0, 2, 1)
+        y = torch.relu(self.norm1(y))
         y = y.permute(0, 2, 1)
         y = self.conv2(y)
         y = y.permute(0, 2, 1)
         features = self.norm2(y)
         y = self.linear(y)
-        if self.duration:
-            y = nn.ReLU()(y)
-            return y, features
-
-        return y
+        y = torch.relu(y)
+        return y, features
 
 
 class Fuse(nn.Module):
@@ -321,8 +340,8 @@ class PhonemeEncoder(nn.Module):
 
     def __init__(self,
                  alphabet_dim: int,
-                 pitch_stats: Optional[dict[str, float]] = None,
-                 energy_stats: Optional[dict[str, float]] = None,
+                 pitch_stats: Optional[AcousticStats] = None,
+                 energy_stats: Optional[AcousticStats] = None,
                  depth: int = 2,
                  reduction: int = 4,
                  head: int = 1,
@@ -344,7 +363,11 @@ class PhonemeEncoder(nn.Module):
         self.feature_upsampler = GaussianUpsampling()
         self.pitch_decoder = AcousticDecoder(dim, acoustic_stats=pitch_stats)
         self.energy_decoder = AcousticDecoder(dim, acoustic_stats=energy_stats)
-        self.duration_decoder = AcousticDecoder(dim, duration=True)
+        self.duration_decoder = DurationDecoder(dim)
+
+    def reset_acoustic_stats(self, pitch_stats: AcousticStats, energy_stats: AcousticStats):
+        self.pitch_decoder.set_acoustic_stats(pitch_stats, dim=self.pitch_decoder.dim)
+        self.energy_decoder.set_acoustic_stats(energy_stats, dim=self.energy_decoder.dim)
 
     # TODO: make this function train-only
     def forward(self, x: OgmiosBatch, train=False):
@@ -363,7 +386,7 @@ class PhonemeEncoder(nn.Module):
         pitch_features = pitch_features.squeeze()
         if mask is not None:
             pitch_features = pitch_features.masked_fill(mask, 0)
-        elif pitch_features.dim() != 3:
+        elif pitch_features.dim() != 3:  # TODO: maybe can be deleted, not used in training
             pitch_features = pitch_features.unsqueeze(0)
 
         energy_pred = self.energy_decoder(fused_features)
@@ -372,7 +395,7 @@ class PhonemeEncoder(nn.Module):
 
         if mask is not None:
             energy_features = energy_features.masked_fill(mask, 0)
-        elif energy_features.dim() != 3:
+        elif energy_features.dim() != 3:  # TODO: maybe can be deleted, not used in training
             energy_features = energy_features.unsqueeze(0)
 
         duration_pred, duration_features = self.duration_decoder(fused_features)
@@ -389,6 +412,7 @@ class PhonemeEncoder(nn.Module):
         else:
             durations = duration_target
 
+        # applying phoneme mask to predictions
         if phoneme_mask is not None:
             durations = durations.masked_fill(phoneme_mask, 0).clamp(min=0)
         else:
