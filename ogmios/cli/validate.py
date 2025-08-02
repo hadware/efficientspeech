@@ -1,4 +1,3 @@
-
 import datetime
 import logging
 from pathlib import Path
@@ -25,7 +24,7 @@ def print_args(args):
     return opt_log
 
 
-class FineTuneCommandParser(Tap):
+class ValidateCommand(Tap):
     config: Path  # Path to processing config file (yaml)
     checkpoint: Path # Path to model checkpoint
     verbose: bool = False
@@ -49,7 +48,7 @@ class FineTuneCommandParser(Tap):
 
 
 if __name__ == "__main__":
-    args = FineTuneCommandParser().parse_args()
+    args = ValidateCommand().parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
 
     config = yaml.load(open(args.config, "r"), Loader=yaml.FullLoader)
@@ -69,8 +68,6 @@ if __name__ == "__main__":
     model.lr = args.lr
     model.weight_decay = args.weight_decay
     model.max_epochs = args.max_epochs
-    model.phoneme2mel.encoder.reset_acoustic_stats(dataset_folder.stats["pitch"],
-                                                   dataset_folder.stats["energy"])
 
 
     if args.verbose:
@@ -81,11 +78,9 @@ if __name__ == "__main__":
     trainer = Trainer(accelerator=args.accelerator,
                       devices=args.devices,
                       precision=args.precision,
-                      check_val_every_n_epoch=args.val_every_epoch,
-                      max_epochs=args.max_epochs,
                       logger=tb_logger)
 
     start_time = datetime.datetime.now()
-    trainer.fit(model, datamodule=datamodule)
+    trainer.validate(model, datamodule=datamodule)
     elapsed_time = datetime.datetime.now() - start_time
     print(f"Training time: {elapsed_time}")

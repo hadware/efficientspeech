@@ -5,10 +5,10 @@ Rowel Atienza
 Apache 2.0 License
 2023
 '''
-from typing import Optional
+from typing import Optional, TypedDict
 
 import torch
-from torch import nn
+from torch import nn, inference_mode
 
 from .blocks import MixFFN, SelfAttention
 from ..datamodule import OgmiosBatch
@@ -370,13 +370,10 @@ class PhonemeEncoder(nn.Module):
         self.energy_decoder.set_acoustic_stats(energy_stats, dim=self.energy_decoder.dim)
 
     # TODO: make this function train-only
-    def forward(self, x: OgmiosBatch, train=False):
+    def forward(self, x: OgmiosBatch):
         phoneme = x["phoneme"]
-        phoneme_mask = x["phoneme_mask"] if phoneme.shape[0] > 1 else None
-
-        pitch_target = x["pitch"] if train else None
-        energy_target = x["energy"] if train else None
-        duration_target = x["duration"] if train else None
+        phoneme_mask = x["phoneme_mask"]
+        pitch_target, energy_target, duration_target = x["pitch"], x["energy"], x["duration"]
 
         features, mask = self.encoder(phoneme, mask=phoneme_mask)
         fused_features = self.fuse(features, mask=mask)
@@ -384,39 +381,71 @@ class PhonemeEncoder(nn.Module):
         pitch_pred = self.pitch_decoder(fused_features)
         pitch_features = self.pitch_decoder.get_embedding(pitch_pred, pitch_target, mask)
         pitch_features = pitch_features.squeeze()
-        if mask is not None:
-            pitch_features = pitch_features.masked_fill(mask, 0)
-        elif pitch_features.dim() != 3:  # TODO: maybe can be deleted, not used in training
-            pitch_features = pitch_features.unsqueeze(0)
+        pitch_features = pitch_features.masked_fill(mask, 0)
 
         energy_pred = self.energy_decoder(fused_features)
         energy_features = self.energy_decoder.get_embedding(energy_pred, energy_target, mask)
         energy_features = energy_features.squeeze()
-
-        if mask is not None:
-            energy_features = energy_features.masked_fill(mask, 0)
-        elif energy_features.dim() != 3:  # TODO: maybe can be deleted, not used in training
-            energy_features = energy_features.unsqueeze(0)
+        energy_features = energy_features.masked_fill(mask, 0)
 
         duration_pred, duration_features = self.duration_decoder(fused_features)
-        if mask is not None:
-            duration_features = duration_features.masked_fill(mask, 0)
+        duration_features = duration_features.masked_fill(mask, 0)
 
         fused_features = torch.cat([fused_features,
                                     pitch_features,
                                     energy_features,
                                     duration_features], dim=-1)
 
-        if duration_target is None:
-            durations = torch.round(duration_pred).squeeze()
-        else:
-            durations = duration_target
+        durations = duration_target
 
-        # applying phoneme mask to predictions
-        if phoneme_mask is not None:
-            durations = durations.masked_fill(phoneme_mask, 0).clamp(min=0)
-        else:
-            durations = durations.unsqueeze(0)
+        # applying phoneme mask to durations
+        durations = durations.masked_fill(phoneme_mask, 0).clamp(min=0)
+
+        features, mel_mask = self.feature_upsampler(
+            emb=fused_features,
+            durations=durations,
+        )
+        mel_len_pred = durations.sum(dim=1)
+
+        y = {"pitch": pitch_pred,
+             "energy": energy_pred,
+             "duration": duration_pred,
+             "mel_len": mel_len_pred,
+             "features": features,
+             "mel_mask": mel_mask, }
+
+        return y
+
+    @torch.inference_mode()
+    def infer(self, x: OgmiosBatch):
+        phoneme = x["phoneme"]
+        phoneme_mask = x["phoneme_mask"]
+
+        features, mask = self.encoder(phoneme, mask=phoneme_mask)
+        fused_features = self.fuse(features, mask=mask)
+
+        pitch_pred = self.pitch_decoder(fused_features)
+        pitch_features = self.pitch_decoder.get_embedding(pitch_pred, None, mask)
+        pitch_features = pitch_features.squeeze()
+        pitch_features = pitch_features.masked_fill(mask, 0)
+
+        energy_pred = self.energy_decoder(fused_features)
+        energy_features = self.energy_decoder.get_embedding(energy_pred, None, mask)
+        energy_features = energy_features.squeeze()
+        energy_features = energy_features.masked_fill(mask, 0)
+
+        duration_pred, duration_features = self.duration_decoder(fused_features)
+        duration_features = duration_features.masked_fill(mask, 0)
+
+        fused_features = torch.cat([fused_features,
+                                    pitch_features,
+                                    energy_features,
+                                    duration_features], dim=-1)
+
+        durations = torch.round(duration_pred).squeeze()
+
+        # applying phoneme mask to durations
+        durations = durations.masked_fill(phoneme_mask, 0).clamp(min=0)
 
         features, mel_mask = self.feature_upsampler(
             emb=fused_features,
@@ -440,13 +469,11 @@ class PhonemeEncoder(nn.Module):
 
         pitch_pred = self.pitch_decoder(fused_features)
         pitch_features = self.pitch_decoder.get_embedding(pitch_pred, None, None)
-        pitch_features = pitch_features.squeeze()
-        pitch_features = pitch_features.unsqueeze(0)
+        pitch_features = pitch_features.squeeze().unsqueeze(0)
 
         energy_pred = self.energy_decoder(fused_features)
         energy_features = self.energy_decoder.get_embedding(energy_pred, None, None)
-        energy_features = energy_features.squeeze()
-        energy_features = energy_features.unsqueeze(0)
+        energy_features = energy_features.squeeze().unsqueeze(0)
 
         duration_pred, duration_features = self.duration_decoder(fused_features)
 
@@ -463,10 +490,19 @@ class PhonemeEncoder(nn.Module):
         y = {"pitch": pitch_pred,
              "energy": energy_pred,
              "duration": duration_pred,
-             "features": features,
-             "masks": None}
+             "features": features}
 
         return y
+
+
+class Phone2MelPredictions(TypedDict):
+    pitch: torch.Tensor
+    energy: torch.Tensor
+    duration: torch.Tensor
+    mel_len: torch.Tensor
+    mel_mask: torch.Tensor
+    mel: torch.Tensor
+
 
 
 class Phoneme2Mel(nn.Module):
@@ -480,22 +516,23 @@ class Phoneme2Mel(nn.Module):
         self.encoder = encoder
         self.decoder = decoder
 
-    def forward(self, x, train=False):
-        pred = self.encoder(x, train=train)
+    def forward(self, x: OgmiosBatch , train: bool = True) -> Phone2MelPredictions:
+        if train:
+            pred = self.encoder(x)
+        else:
+            pred = self.encoder.infer(x)
         mel = self.decoder(pred["features"])
+        del pred["features"]
 
         mel_mask = pred["mel_mask"]
+
         # masking mels based on mask computed by upsampler
-        if mel_mask is not None and mel.size(0) > 1:
-            mel_mask = mel_mask[:, :, :mel.shape[-1]]
-            mel = mel.masked_fill(~mel_mask, 0)
+        mel_mask = mel_mask[:, :, :mel.shape[-1]]
+        mel = mel.masked_fill(~mel_mask, 0)
 
         pred["mel"] = mel
 
-        if train:
-            return pred
-
-        return mel, pred["mel_len"], pred["duration"]
+        return pred
 
     @torch.inference_mode()
     def synthesize_one(self, x: torch.Tensor):

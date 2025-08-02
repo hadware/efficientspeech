@@ -10,8 +10,8 @@ from tap import Tap
 
 from ogmios.dataset.commons import PreprocessingConfig, DatasetFolder
 from ogmios.hifigan import HifiganOnnxModel
+from ogmios.lightning import EfficientSpeech
 from ogmios.phonemizer import OgmiosPhonemizer
-from ogmios.trainer import EfficientSpeech, get_hifigan
 from ..utils import logger, get_player
 
 

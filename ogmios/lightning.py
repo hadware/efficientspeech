@@ -7,6 +7,7 @@ Apache 2.0 License
 '''
 
 import math
+from typing import Optional
 
 import numpy as np
 import torch
@@ -15,10 +16,11 @@ from lightning import LightningModule
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 
+from ogmios.config import ModelConfig, DatasetParams
 from ogmios.datamodule import OgmiosBatch
-from ogmios.dataset.commons import PreprocessingConfig
 from ogmios.hifigan import HifiganOnnxModel
-from ogmios.layers import Phoneme2Mel
+from ogmios.layers import Phoneme2Mel, MelDecoder, PhonemeEncoder
+from ogmios.layers.networks import Phone2MelPredictions
 from ogmios.utils import plot_spectrogram_to_numpy
 
 
@@ -52,38 +54,43 @@ def get_lr_scheduler(optimizer, warmup_steps, total_steps, min_lr=0):
 
 class EfficientSpeech(LightningModule):
     def __init__(self,
-                 preprocess_config: PreprocessingConfig,
-                 hifigan_onnx: HifiganOnnxModel,
-                 phoneme2mel: Phoneme2Mel,
+                 model_config: ModelConfig,
+                 dataset_params: DatasetParams,
+                 sampling_rate: int,
                  lr: float = 1e-3,
                  weight_decay: float = 1e-6,
-                 max_epochs: int = 5000
+                 max_epochs: int = 5000,
+                 hifigan_onnx: Optional[HifiganOnnxModel] = None,
                  ):
         super().__init__()
-        self.preprocess_config = preprocess_config
+        self.save_hyperparameters(ignore=["hifigan_onnx"])
+        self.sampling_rate = sampling_rate
         self.lr = lr
         self.weight_decay = weight_decay
         self.max_epochs = max_epochs
-        self.phoneme2mel = phoneme2mel
         self.hifigan = hifigan_onnx
 
-        self.training_step_outputs = []
+        phoneme_encoder = PhonemeEncoder(alphabet_dim=dataset_params.dim_alphabet,
+                                         pitch_stats=dataset_params.pitch_stats,
+                                         energy_stats=dataset_params.energy_stats,
+                                         depth=model_config.depth,
+                                         reduction=model_config.reduction,
+                                         head=model_config.head,
+                                         embed_dim=model_config.embed_dim,
+                                         kernel_size=model_config.kernel_size,
+                                         expansion=model_config.expansion, )
+
+        mel_decoder = MelDecoder(dim=model_config.embed_dim // model_config.reduction,
+                                 n_mel_channels=dataset_params.n_mels,
+                                 kernel_size=model_config.decoder_kernel_size,
+                                 n_blocks=model_config.n_blocks,
+                                 block_depth=model_config.block_depth)
+
+        self.phoneme2mel = Phoneme2Mel(encoder=phoneme_encoder,
+                                       decoder=mel_decoder)
 
     def forward(self, x):
         return self.phoneme2mel(x, train=self.training)
-
-    def predict_step(self, batch, batch_idx=0, dataloader_idx=0):
-        batch_mels, batch_mel_lens, batch_durations = self.phoneme2mel(batch, train=False)
-        batch_mels = batch_mels.transpose(1, 2)
-        batch_mel_lens = batch_mel_lens.int()
-        predictions = []
-        with torch.no_grad():
-            for mel, mel_len, duration in zip(batch_mels, batch_mel_lens, batch_durations):
-                mel = mel[:, :mel_len]
-                wav = self.hifigan.synth(mel.cpu().numpy().astype(np.float32))
-                predictions.append((wav, mel))
-
-        return predictions
 
     def loss(self, y_hat, y, x):
         pitch_pred = y_hat["pitch"]
@@ -145,48 +152,72 @@ class EfficientSpeech(LightningModule):
 
     def on_train_epoch_end(self):
         self.log("lr", self.scheduler.get_last_lr()[0], on_epoch=True, prog_bar=True)
-        self.training_step_outputs.clear()
+
+    def predict_step(self, batch: OgmiosBatch, batch_idx: int = 0, dataloader_idx: int = 0) -> Phone2MelPredictions:
+        return self.phoneme2mel(batch, train=False)
+
+    def synth_wav(self, mel: np.ndarray):
+        mel = mel.transpose(1, 0).astype(np.float32)
+        wav = self.hifigan.synth(mel)
+        return wav
+
+    def log_predictions(self, index: int,
+                        predictions: Phone2MelPredictions,
+                        mels_gt: torch.Tensor,
+                        mel_lens_gt: torch.Tensor):
+        mel_len = predictions["mel_len"][index].int()
+        mel_pred = predictions["mel"][index][:mel_len, :]
+
+        mel_len_gt = mel_lens_gt[index]
+        mel_gt = mels_gt[index, :mel_len_gt, :]
+
+        wav_pred = self.synth_wav(mel_pred.cpu().numpy())
+        wav_resynth = self.synth_wav(mel_gt.cpu().numpy())
+
+        self.logger.experiment.add_image(
+            f"mel/pred_{i}",
+            plot_spectrogram_to_numpy(mel_pred),
+            global_step=self.global_step,
+            dataformats="HWC"
+        )
+
+        self.logger.experiment.add_image(
+            f"mel/target_{i}",
+            plot_spectrogram_to_numpy(mel_gt),
+            global_step=self.global_step,
+            dataformats="HWC"
+        )
+
+        self.logger.experiment.add_audio(
+            tag=f"wav/predicted_{i}",
+            snd_tensor=wav_pred,
+            global_step=self.global_step,
+            sample_rate=self.sampling_rate)
+
+        # then logging resynthesis of ground truth mel (through hifigan)
+        self.logger.experiment.add_audio(
+            tag=f"wav/resynth_{i}",
+            snd_tensor=wav_resynth,
+            global_step=self.global_step,
+            sample_rate=self.sampling_rate)
 
     def validation_step(self, batch, batch_idx):
         if batch_idx != 0 or self.current_epoch < 1:
             return
 
-        # first logging predictions from eval batch
         x, y = batch
         mels_gt = y["mel"]
         mel_lens_gt = x["mel_len"]
-        for i, (wav, mels_pred) in enumerate(self.predict_step(x)):
-            mels_pred = mels_pred.cpu().numpy()
+        predictions = self.predict_step(x)
 
-            self.logger.experiment.add_image(
-                f"mel/pred_{i}",
-                plot_spectrogram_to_numpy(mels_pred),
-                global_step=self.global_step,
-                dataformats="HWC"
-            )
-            self.logger.experiment.add_audio(
-                tag=f"wav/predicted_{i}",
-                snd_tensor=wav,
-                global_step=self.global_step,
-                sample_rate=self.hparams.preprocess_config.sampling_rate)
+        mel_loss, pitch_loss, energy_loss, duration_loss = self.loss(predictions, y, x)
+        self.log("val_mel_loss", mel_loss)
+        self.log("val_pitch_loss", pitch_loss)
+        self.log("val_energy_loss", energy_loss)
+        self.log("val_dur_loss", duration_loss)
 
-            # then logging resynthesis of ground truth mel (through hifigan)
-            with torch.no_grad():
-                mel_gt = mels_gt[i, :mel_lens_gt[i], :].cpu().numpy().transpose(1, 0)
-                wav_gt = self.hifigan.synth(mel_gt)
-
-                self.logger.experiment.add_audio(
-                    tag=f"wav/resynth_{i}",
-                    snd_tensor=wav_gt,
-                    global_step=self.global_step,
-                    sample_rate=self.hparams.preprocess_config.sampling_rate)
-
-                self.logger.experiment.add_image(
-                    f"mel/target_{i}",
-                    plot_spectrogram_to_numpy(mel_gt),
-                    global_step=self.global_step,
-                    dataformats="HWC"
-                )
+        for i in range(10):
+            self.log_predictions(i, predictions, mels_gt, mel_lens_gt)
 
     def configure_optimizers(self):
         optimizer = AdamW(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)

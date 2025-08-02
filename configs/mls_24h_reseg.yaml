@@ -3,14 +3,14 @@ dataset:
 
 preprocessing:
   val_size: 128
-  sampling_rate: 22050
+  sampling_rate: 16000
 
   text:
     language: "fr"
     max_length: 4096
   stft:
     filter_length: 1024
-    hop_length: 256
+    hop_length: 160
     win_length: 1024
   mel:
     n_mel_channels: 128

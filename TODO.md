@@ -15,9 +15,6 @@
   - pitch shouldn't be predicted at runtime
   - investigate if speed/pitch height have an effect on mbrola
 
-- Feature extraction:
-  - All the STFT code can probably be thrown away, an pytorch.stft be used instead
-
 Notes HIFIGAN:
 - hifigan semble vouloir du 128 mel en entrée.
   - Voir à quel point cela alourdi ogmios

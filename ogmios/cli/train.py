@@ -1,13 +1,3 @@
-'''
-EfficientSpeech: An On-Device Text to Speech Model
-https://ieeexplore.ieee.org/abstract/document/10094639
-Rowel Atienza
-Apache 2.0 License
-
-Usage:
-    python3 train.py
-'''
-
 import datetime
 import logging
 from pathlib import Path
@@ -16,14 +6,15 @@ from typing import Literal
 import torch
 import yaml
 from lightning import Trainer
+from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger
 from tap import Tap
 
+from ogmios.config import ModelConfig, DatasetParams
 from ogmios.datamodule import OgmiosDataModule
 from ogmios.dataset.commons import PreprocessingConfig, DatasetFolder
 from ogmios.hifigan import HifiganOnnxModel
-from ogmios.layers import PhonemeEncoder, MelDecoder, Phoneme2Mel
-from ogmios.trainer import EfficientSpeech
+from ogmios.lightning import EfficientSpeech
 
 
 def print_args(args):
@@ -36,6 +27,37 @@ def print_args(args):
     return opt_log
 
 
+MODEL_CONFIGS = {
+    "tiny": ModelConfig(depth=2,
+                        block_depth=2,
+                        n_blocks=2,
+                        reduction=4,
+                        head=1,
+                        embed_dim=128,
+                        kernel_size=3,
+                        decoder_kernel_size=5,
+                        expansion=1),
+    "small": ModelConfig(depth=2,
+                         block_depth=2,
+                         n_blocks=3,
+                         reduction=2,
+                         head=1,
+                         embed_dim=256,
+                         kernel_size=3,
+                         decoder_kernel_size=5,
+                         expansion=1),
+    "base": ModelConfig(depth=2,
+                        block_depth=3,
+                        n_blocks=3,
+                        reduction=1,
+                        head=2,
+                        embed_dim=128,
+                        kernel_size=5,
+                        decoder_kernel_size=5,
+                        expansion=2),
+}
+
+
 class TrainCommandParser(Tap):
     config: Path  # Path to processing config file (yaml)
     verbose: bool = False
@@ -44,7 +66,7 @@ class TrainCommandParser(Tap):
     devices: int = 1
     iter: int = 1
     threads: int = 24
-    precision: Literal["bf16-mixed", "16-mixed", 16, 32, 64] = 16
+    precision: Literal["bf16-mixed", "16-mixed", 16, 32, 64] = "16-mixed"
 
     num_workers: int = 4
     max_epochs: int = 5000
@@ -52,17 +74,9 @@ class TrainCommandParser(Tap):
     weight_decay: float = 1e-5  # Optimizer weight decay
     lr: float = 1e-3  # Learning rate for AdamW
     val_every_epoch: int = 5  # Run val every N epochs
-
     batch_size: int = 128  # Batch size
-    depth: int = 2  # Encoder depth. Default for tiny, small & base.
-    block_depth: int = 2  # Decoder block depth. Default for tiny & small. Base:  3
-    n_blocks: int = 2  # Decoder blocks. Default for tiny. Small & base: 3.
-    reduction: int = 4  # Embed dim reduction factor. Default for tiny. Small: 2. Base: 1.
-    head: int = 1  # Number of transformer encoder head. Default for tiny & small. Base: 2.
-    embed_dim: int = 128  # Embedding or feature dim. To be reduced by --reduction.
-    kernel_size: int = 3  # Conv1d kernel size (Encoder). Default for tiny & small. Base is 5.
-    decoder_kernel_size: int = 5  # Conv1d kernel size (Decoder). Default for tiny, small & base: 5.
-    expansion: int = 1  # MixFFN expansion. Default for tiny & small. Base: 2.
+
+    model_config: Literal["tiny", "small", "base"] = "tiny"
 
     hifigan_onnx_path: Path = Path("hifigan/hifigan_16k_light.onnx")
 
@@ -77,50 +91,47 @@ if __name__ == "__main__":
                                    ds_name=config["dataset"].get("name"))
     args.num_workers *= args.devices
     torch.set_float32_matmul_precision('high')
+    model_config = MODEL_CONFIGS[args.model_config]
+    dataset_params = DatasetParams(pitch_stats=dataset_folder.stats["pitch"],
+                                   energy_stats=dataset_folder.stats["energy"],
+                                   dim_alphabet=len(dataset_folder.phonemes),
+                                   n_mels=preprocess_cfg.mel.n_mel_channels)
 
     datamodule = OgmiosDataModule(dataset_folder=dataset_folder,
                                   preprocess_config=preprocess_cfg,
                                   batch_size=args.batch_size,
                                   num_workers=args.num_workers)
 
-    phoneme_encoder = PhonemeEncoder(alphabet_dim=len(dataset_folder.phonemes),
-                                     pitch_stats=dataset_folder.stats["pitch"],
-                                     energy_stats=dataset_folder.stats["energy"],
-                                     depth=args.depth,
-                                     reduction=args.reduction,
-                                     head=args.head,
-                                     embed_dim=args.embed_dim,
-                                     kernel_size=args.kernel_size,
-                                     expansion=args.expansion)
-
-    mel_decoder = MelDecoder(dim=args.embed_dim // args.reduction,
-                             n_mel_channels=preprocess_cfg.mel.n_mel_channels,
-                             kernel_size=args.decoder_kernel_size,
-                             n_blocks=args.n_blocks,
-                             block_depth=args.block_depth)
-
-    phoneme2mel = Phoneme2Mel(encoder=phoneme_encoder,
-                              decoder=mel_decoder)
-
     hifigan_onnx = HifiganOnnxModel(args.hifigan_onnx_path)
-    pl_model = EfficientSpeech(hifigan_onnx=hifigan_onnx,
-                               preprocess_config=preprocess_cfg,
-                               phoneme2mel=phoneme2mel,
+    pl_model = EfficientSpeech(model_config=model_config,
+                               dataset_params=dataset_params,
+                               hifigan_onnx=hifigan_onnx,
+                               sampling_rate=preprocess_cfg.sampling_rate,
                                lr=args.lr,
                                weight_decay=args.weight_decay,
-                               max_epochs=args.max_epochs )
+                               max_epochs=args.max_epochs)
 
     if args.verbose:
         print_args(args)
 
     tb_logger = TensorBoardLogger("tb_logs", name=f"ogmios_{dataset_folder.name}")
 
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=tb_logger.log_dir,  # Dossier où sauvegarder
+        filename="last",  # Toujours le même nom de fichier
+        save_last=True,  # Optionnel, pour garantir une dernière sauvegarde aussi
+        save_weights_only=False,  # Sauvegarder tout le modèle (poids et architecture)
+        save_on_train_epoch_end=True,
+    )
+
     trainer = Trainer(accelerator=args.accelerator,
                       devices=args.devices,
                       precision=args.precision,
                       check_val_every_n_epoch=args.val_every_epoch,
                       max_epochs=args.max_epochs,
-                      logger=tb_logger)
+                      logger=tb_logger,
+                      log_every_n_steps=25,
+                      callbacks=[checkpoint_callback])
 
     start_time = datetime.datetime.now()
     trainer.fit(pl_model, datamodule=datamodule)

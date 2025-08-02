@@ -53,12 +53,13 @@ class DatasetPreprocessor:
             n_mels=config.mel.n_mel_channels,
             f_min=config.mel.mel_fmin,
             f_max=config.mel.mel_fmax,
-            center=False,
+            center=True,
             power=1.0,
             norm="slaney",
-            onesided=True,
             mel_scale="slaney",
         )
+        if torch.cuda.is_available():
+            self.logmel_spectrogram = self.logmel_spectrogram.cuda()
 
     def remove_trailing_silences(self, phones : list[Interval]):
         dead_phones = {"sil", "sp", "spn"}
@@ -85,6 +86,7 @@ class DatasetPreprocessor:
         starts, ends, filtered_phones = zip(*((p.start, p.end, p.annot) for p in phones_intervals))
         starts = np.array(starts)
         ends = np.array(ends)
+        # corresponds to the number of frames/sec in mel transform
         sampling_factor = self.config.sampling_rate / self.config.stft.hop_length
 
         # computing duration (in number of mel frames) for each phones
@@ -130,15 +132,20 @@ class DatasetPreprocessor:
 
         return pitch
 
-    def compute_mel_and_energy(self, wav: np.ndarray, durations: np.ndarray) \
-            -> tuple[np.ndarray, np.ndarray]:
+    def compute_mel_and_energy(self, wav: np.ndarray,
+                               durations: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         total_dur = durations.sum()
 
         with torch.no_grad():
-            audio = torch.clip(torch.FloatTensor(wav).unsqueeze(0), -1, 1)
+            audio = torch.FloatTensor(wav)
+            if torch.cuda.is_available():
+                audio = audio.cuda()
+            audio = torch.clip(audio.unsqueeze(0), -1, 1)
             mel, energy = self.logmel_spectrogram(audio)
-            mel = torch.squeeze(mel, 0).numpy().astype(np.float32)
-            energy = torch.squeeze(energy, 0).numpy().astype(np.float32)
+            mel = torch.squeeze(mel, 0).cpu().numpy().astype(np.float32)
+            energy = torch.squeeze(energy, 0).cpu().numpy().astype(np.float32)
+
+        mel = mel[:, :total_dur]
 
         if self.config.energy.feature_level == "phoneme":
             # do energy averaging per phoneme
@@ -150,8 +157,9 @@ class DatasetPreprocessor:
                     energy[i] = 0
                 pos += d
             energy = energy[: len(durations)]
-
-        return mel[:, :total_dur], energy[:total_dur]
+            return mel, energy
+        else:
+            return mel, energy[:total_dur]
 
     def process_utterance(self, wav_path: Path, alignments_path: Path):
         with open(alignments_path) as json_file:
@@ -168,7 +176,6 @@ class DatasetPreprocessor:
         mel, energy = self.compute_mel_and_energy(wav, durations)
         mel = mel.T
 
-        # TODO: fix the error that triggers this assert
         assert mel.shape[0] == total_duration
 
         np.save(self.dataset.durations_folder / f"{wav_path.stem}.npy", durations)
